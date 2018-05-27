@@ -67,6 +67,32 @@
     [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-vals))
      (interpret (hash-set c-env id a-vals) body)]))
 
+; modified interpret for fallthrough
+#; (define (interpret env prog)
+     (define I (curry interpret env))
+     (match prog
+       [`(var ,x) (hash-ref env x (λ () (void)))]
+       [`(dat ,d) d]
+       [`(+ ,xs ...) (apply + (map I xs))]
+       [`(app fun) 'function-fallthrough]
+       [`(app (fun ,r ,rs ...) ,arg)
+        (let ([e-arg (I arg)]
+              [whatever (I r)])
+          ; or use seperate fn for matching? need to return env...
+          (if (equal? 'no-match (I `(blah ,e-arg ,r)))
+              (I `((fun ,@rs) e-arg))
+              whatever))]
+       #;[`(fun [(p-var ,id) → ,body]
+                [pat → tem] ...) 0]
+       #;[`(blah ,arg (p-lit ,d))
+          (if (equal? d (I arg))
+              '() ; no bindings?
+              'no-match)]
+       #;[`(((p-cons a b) → ,tem) ,arg)]
+       [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ; always bind
+       [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-vals))
+        (interpret (hash-set c-env id a-vals) body)]))
+
 
 #|
 

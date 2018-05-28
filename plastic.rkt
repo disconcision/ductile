@@ -2,9 +2,8 @@
 
 (define (run-interpreter prog)
   (define I*
-    (compose (curry interpret #hash((⊥ . ⊥)))
+    (compose (curry interpret #hash())
              explicitize
-             #;expand
              expand-top))
   (I* prog))
 
@@ -45,61 +44,49 @@
     [(? symbol?) `(p-var ,stx)]
     [(? number?) `(p-dat ,stx)] ; or use P==
     [`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
-    ; for now we just leave the following as-is:
-    #;[`(P== ,pat) ?]
-    #;[`(Papp ,f ,pat) ?]
-    #;[`(P? ,pred ,pat) ?]
-    #;[`(Pcons ,pcar ,pcdr) ?]
-    #;[`(Plist ,a ...) ?]
     [_ stx]))
-
-#;(define (expand stx)
-    (define Ex expand)
-    (match stx
-      [`(,x → ,body)
-       `(,x → ,(Ex body))]
-      [`(+ ,xs ...) `(+ ,@(map Ex xs))]
-      [`(,f ,x) `(,(Ex f) ,(Ex x))]
-      [_ stx]))
 
 (define (interpret env prog)
   (define I (curry interpret env))
   #;(println prog)
   (match prog
-    [`(var ,x) (hash-ref env x (λ () (void)))]
+    [`(var ,x) (hash-ref env x (λ () (void)))] ;fix
     [`(dat ,d) d]
-    #;['true "sdf"]
-    #;[`(+ ,xs ...) (apply + (map I xs))]
+    ['true 'true] ;hack!!!!
+    ['null 'null] ;ibid
     [`((p-var ,id) → ,body) `(c: ,id ,body ,env)]
-    [`((p-dat ,d) → ,body) `(c-dat: ,d ,body ,env)]
-    [`((p-cons ,a ,b) → ,body) `(c-cons: (p-cons ,a ,b) ,body ,env)]
-    [`(λ ,cases ...) `(c+ ,env ,@cases)]
+    [`((p-dat ,d) → ,body) `(c-new: (p-dat ,d) ,body ,env)]
+    [`((cons ,a ,b) → ,body) `(c-new: (cons ,a ,b) ,body ,env)]
+    [`(λ ,cases ...) `(c-fall: ,env ,@cases)]
+    [`(c-fall: ,blah ...) prog] ; hack
+    ; need to fix fallthough code below rewriting to c-fall:
     [`(cons ,a ,b) `(cons ,(I a) ,(I b))]
     [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
      (interpret (hash-set c-env id a-val) body)]
     [`(app ,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
      (let ([new-env (pattern-match a-val c-env pat)])
-       (interpret new-env body))]
-    [`(app ,(app I `(c-dat: ,d ,body ,c-env)) ,(app I a-val))
-     (if (equal? d a-val)
-         (interpret c-env body)
-         'no-match)]
-    [`(app ,(app I `(c+ ,c-env ,case1 ,cases ...)) ,(app I a-val))
+       (if (equal? new-env 'no-match)
+           'no-match
+           (interpret new-env body)))]
+    [`(app ,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
+     #;(println `(app ,case1 ,a-val))
      (let ([result (interpret c-env `(app ,case1 ,a-val))])
+       #;(println `(,result ,case1 ,a-val))
        (if (equal? 'no-match result)
-           (I `(app (c+ ,c-env ,@cases) ,a-val))
+           (I `(app (c-fall: ,c-env ,@cases) ,a-val))
            result))]))
 
 (require racket/hash)
 (define (pattern-match arg c-env pat) ; returns env
   (match pat
     [`(p-var ,id) (hash-set c-env id arg)]
-    [`(p-dat ,d) (if (equal? d arg)
-                     c-env
-                     'no-match)]
+    [`(p-dat ,d) 
+     (if (equal? d arg)
+         c-env
+         'no-match)]
     [`(cons ,p0 ,p1) ; in this case, maybe be many things to add
      (match arg
-       [`(cons ,a0 ,a1)
+       [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
         (let ([temp1 (pattern-match a0 c-env p0)]
               [temp2 (pattern-match a1 c-env p1)])
           (if (or (equal? 'no-match temp1)
@@ -187,6 +174,20 @@ actually: if we know the expr is a cons
                                       ((cons a b) → (cons a b))))
                                   (identity (cons true true))))
                '(cons true true))
+
+  (test-equal? "flip cons"
+               (run-interpreter '(#;(define-data Bool
+                                      true
+                                      false)
+                                  #;(define-data List
+                                      null
+                                      (cons Bool List))
+                                  (define flip
+                                    (λ #;(List → List)
+                                      (null → null)
+                                      ((cons a b) → (cons b a))))
+                                  (flip (cons true null))))
+               '(cons null true))
   
   #;
   (test-equal? "enumerative type"

@@ -23,23 +23,28 @@
   (define Px pattern-explicitize)
   (match stx
     ['null `(dat null)]
+    ['true `(dat true)]
     [(? symbol?) `(var ,stx)]
     [(? number?) `(dat ,stx)]
     [`(,pat → ,expr)
      `(,(Px pat) → ,(Ex expr))]
+    [`(λ ,cases ...)
+     `(λ ,@(map Ex cases))]
     [`(cons ,a ,b) `(cons ,(Ex a) ,(Ex b))]
     ; turn lists into cons or leave seperate?
     #;[`(list ,xs ...) `(list ,@(map Ex xs))]
-    [`(+ ,xs ...) `(+ ,@(map Ex xs))]
+    #;[`(+ ,xs ...) `(+ ,@(map Ex xs))]
     [`(,f ,x) `(app ,(Ex f) ,(Ex x))]
     [_ stx]))
 
 (define (pattern-explicitize stx)
   (define Px pattern-explicitize)
   (match stx
-    ['null `(p-lit null)]
+    ['null `(p-dat null)]
+    ['true `(p-dat true)]
     [(? symbol?) `(p-var ,stx)]
     [(? number?) `(p-dat ,stx)] ; or use P==
+    [`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
     ; for now we just leave the following as-is:
     #;[`(P== ,pat) ?]
     #;[`(Papp ,f ,pat) ?]
@@ -48,51 +53,60 @@
     #;[`(Plist ,a ...) ?]
     [_ stx]))
 
-(define (expand stx)
-  (define Ex expand)
-  (match stx
-    [`(,x → ,body)
-     `(,x → ,(Ex body))]
-    [`(+ ,xs ...) `(+ ,@(map Ex xs))]
-    [`(,f ,x) `(,(Ex f) ,(Ex x))]
-    [_ stx]))
+#;(define (expand stx)
+    (define Ex expand)
+    (match stx
+      [`(,x → ,body)
+       `(,x → ,(Ex body))]
+      [`(+ ,xs ...) `(+ ,@(map Ex xs))]
+      [`(,f ,x) `(,(Ex f) ,(Ex x))]
+      [_ stx]))
 
 (define (interpret env prog)
   (define I (curry interpret env))
+  #;(println prog)
   (match prog
     [`(var ,x) (hash-ref env x (λ () (void)))]
     [`(dat ,d) d]
-    [`(+ ,xs ...) (apply + (map I xs))]
+    #;['true "sdf"]
+    #;[`(+ ,xs ...) (apply + (map I xs))]
     [`((p-var ,id) → ,body) `(c: ,id ,body ,env)]
-    [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-vals))
-     (interpret (hash-set c-env id a-vals) body)]))
+    [`((p-dat ,d) → ,body) `(c-dat: ,d ,body ,env)]
+    [`((p-cons ,a ,b) → ,body) `(c-cons: (p-cons ,a ,b) ,body ,env)]
+    [`(λ ,cases ...) `(c+ ,env ,@cases)]
+    [`(cons ,a ,b) `(cons ,(I a) ,(I b))]
+    [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
+     (interpret (hash-set c-env id a-val) body)]
+    [`(app ,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
+     (let ([new-env (pattern-match a-val c-env pat)])
+       (interpret new-env body))]
+    [`(app ,(app I `(c-dat: ,d ,body ,c-env)) ,(app I a-val))
+     (if (equal? d a-val)
+         (interpret c-env body)
+         'no-match)]
+    [`(app ,(app I `(c+ ,c-env ,case1 ,cases ...)) ,(app I a-val))
+     (let ([result (interpret c-env `(app ,case1 ,a-val))])
+       (if (equal? 'no-match result)
+           (I `(app (c+ ,c-env ,@cases) ,a-val))
+           result))]))
 
-; modified interpret for fallthrough
-#; (define (interpret env prog)
-     (define I (curry interpret env))
-     (match prog
-       [`(var ,x) (hash-ref env x (λ () (void)))]
-       [`(dat ,d) d]
-       [`(+ ,xs ...) (apply + (map I xs))]
-       [`(app fun) 'function-fallthrough]
-       [`(app (fun ,r ,rs ...) ,arg)
-        (let ([e-arg (I arg)]
-              [whatever (I r)])
-          ; or use seperate fn for matching? need to return env...
-          (if (equal? 'no-match (I `(blah ,e-arg ,r)))
-              (I `((fun ,@rs) e-arg))
-              whatever))]
-       #;[`(fun [(p-var ,id) → ,body]
-                [pat → tem] ...) 0]
-       #;[`(blah ,arg (p-lit ,d))
-          (if (equal? d (I arg))
-              '() ; no bindings?
-              'no-match)]
-       #;[`(((p-cons a b) → ,tem) ,arg)]
-       [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ; always bind
-       [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-vals))
-        (interpret (hash-set c-env id a-vals) body)]))
-
+(require racket/hash)
+(define (pattern-match arg c-env pat) ; returns env
+  (match pat
+    [`(p-var ,id) (hash-set c-env id arg)]
+    [`(p-dat ,d) (if (equal? d arg)
+                     c-env
+                     'no-match)]
+    [`(cons ,p0 ,p1) ; in this case, maybe be many things to add
+     (match arg
+       [`(cons ,a0 ,a1)
+        (let ([temp1 (pattern-match a0 c-env p0)]
+              [temp2 (pattern-match a1 c-env p1)])
+          (if (or (equal? 'no-match temp1)
+                  (equal? 'no-match temp2))
+              'no-match
+              (hash-union temp1 temp2)))]
+       [_ 'no-match])]))
 
 #|
 
@@ -147,9 +161,86 @@ actually: if we know the expr is a cons
 
   (test-equal? "Numeric literal" (run-interpreter '((define q 1) 3)) 3)
 
-  (test-equal? "addition"
-               (run-interpreter '((define q 1) (+ 1 2 (+ (+ 3) 4 5) 6)))
-               21)
+  #;(test-equal? "addition"
+                 (run-interpreter '((define q 1) (+ 1 2 (+ (+ 3) 4 5) 6)))
+                 21)
+
+
+  (test-equal? "cons 0"
+               (run-interpreter '((define a true)
+                                  #;(define-data Bool
+                                      true
+                                      false)
+                                  (cons true true)))
+               '(cons true true))
+  
+  (test-equal? "basic cons"
+               (run-interpreter '(#;(define-data Bool
+                                      true
+                                      false)
+                                  #;(define-data List
+                                      null
+                                      (cons Bool List))
+                                  (define identity
+                                    (λ #;(List → List)
+                                      (null → null)
+                                      ((cons a b) → (cons a b))))
+                                  (identity (cons true true))))
+               '(cons true true))
+  
+  #;
+  (test-equal? "enumerative type"
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define identity
+                                    (λ (Bool → Bool)
+                                      (true → true)
+                                      (false → false)))
+                                  (define identity2
+                                    (λ (Bool → Bool)
+                                      (a → a)))
+                                  (identity true)))
+               'true)
+
+  #;
+  (test-equal? "maybe"
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define-data Maybe-Bool
+                                    Nothing
+                                    (Just Bool))
+
+                                  (define identity
+                                    (λ (Bool → Bool)
+                                      (true → true)
+                                      (false → false)))
+                                  
+                                  (identity true)))
+               'true)
+
+  #;
+  (test-equal? "recursive datatype"
+               (run-interpreter '((define-data Nat
+                                    zero
+                                    (S Nat))
+                                  (define-data Maybe-Nat
+                                    nothing
+                                    (just Nat))
+                                  ; idea: pred xcept with maybe to handle 0
+                                  (define pred
+                                    (λ (Nat → Maybe-Nat)
+                                      ((S a) → (just a))
+                                      (zero → nothing)))
+                                  #;(define add
+                                      (λ (Nat → (Nat → Nat))
+                                        (a → (λ (Nat → Nat) ; or make nested fns not require type ann?
+                                               (zero → a) 
+                                               ((S b) → (S ((add a) b))))))) ; xcept no recursion...
+                                  ; re above: maybe need explicit fun to differentiate from application
+                                  (add (S zero) (S (S zero)))))
+               0)
 
   #;
   (test-equal? "nullary partial application"

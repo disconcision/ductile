@@ -54,34 +54,31 @@
     [`(dat ,d) d]
     ['true 'true] ;hack!!!!
     ['null 'null] ;ibid
-    [`((p-var ,id) → ,body) `(c: ,id ,body ,env)]
-    [`((p-dat ,d) → ,body) `(c-new: (p-dat ,d) ,body ,env)]
-    [`((cons ,a ,b) → ,body) `(c-new: (cons ,a ,b) ,body ,env)]
-    [`(λ ,cases ...) `(c-fall: ,env ,@cases)]
-    [`(c-fall: ,blah ...) prog] ; hack
-    ; need to fix fallthough code below rewriting to c-fall:
     [`(cons ,a ,b) `(cons ,(I a) ,(I b))]
+    
+    [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ;simple lc
+    [`(,pat → ,body) `(c-new: ,pat ,body ,env)] ;other patterns
+    [`(λ ,cases ...) `(c-fall: ,env ,@cases)] ;fallthru form
+    [`(c-fall: ,blah ...) prog] ; hack
+    ; above: need to fix fallthough code below rewriting to c-fall:
+
     [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
      (interpret (hash-set c-env id a-val) body)]
     [`(app ,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
-     (let ([new-env (pattern-match a-val c-env pat)])
-       (if (equal? new-env 'no-match)
-           'no-match
-           (interpret new-env body)))]
+     (match (pattern-match a-val c-env pat)
+       ['no-match 'no-match]
+       [new-env (interpret new-env body)])]
     [`(app ,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
-     #;(println `(app ,case1 ,a-val))
-     (let ([result (interpret c-env `(app ,case1 ,a-val))])
-       #;(println `(,result ,case1 ,a-val))
-       (if (equal? 'no-match result)
-           (I `(app (c-fall: ,c-env ,@cases) ,a-val))
-           result))]))
+     (match (interpret c-env `(app ,case1 ,a-val))
+       ['no-match (I `(app (c-fall: ,c-env ,@cases) ,a-val))]
+       [result result])]))
 
 (require racket/hash)
 (define (pattern-match arg c-env pat) ; returns env
   (match pat
     [`(p-var ,id) (hash-set c-env id arg)]
     [`(p-dat ,d) 
-     (if (equal? d arg)
+     (if (equal? d arg) ;polymorphic equality extended by define-data?
          c-env
          'no-match)]
     [`(cons ,p0 ,p1) ; in this case, maybe be many things to add

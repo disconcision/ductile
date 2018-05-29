@@ -1,32 +1,33 @@
 #lang racket #| CSC324 SUMMER A1 PROPOSAL |#
 
 (define (run-interpreter prog)
-  (define original-data
-    '((define-data Bool
-        true
-        false)
-      #;(define-data Maybe-Bool
-          nothing
-          (just Bool))
-      #;(define-data Nat
-          zero
-          (S Nat))
-      #;(define-data List-Bool
-          null
-          (cons Bool List))))
-  (define nullary-type-lookup
-    #hash((true . Bool)
-          (false . Bool)
-          (nothing . Maybe-Bool)
-          (zero . Nat)
-          (null . List-Bool)))
-  (define n-ary-type-lookup
-    #hash(((just Bool) . Maybe-Bool)
-          ((S Nat) . Nat)
-          ((Cons Bool List-Bool) . List-Bool)))
-  (define type-lookup-hash nullary-type-lookup)
+  #;(define original-data
+      '((define-data Maybe-Bool
+            nothing
+            (just Bool))
+        (define-data Nat
+            zero
+            (S Nat))
+        (define-data List-Bool
+            null
+            (cons Bool List))))
+  #;(define nullary-type-lookup
+      #hash((true . Bool)
+            (false . Bool)
+            (nothing . Maybe-Bool)
+            (zero . Nat)
+            (null . List-Bool)))
+  #;(define n-ary-type-lookup
+      #hash(((just Bool) . Maybe-Bool)
+            ((S Nat) . Nat)
+            ((Cons Bool List-Bool) . List-Bool)))
+  #;(define type-lookup-hash nullary-type-lookup)
+  #;#;(println "prog:")(println prog)
+  (define types (extract-all-data (hash) prog))
+  #;#;(println "types:")(println types)
+  #;(define types '(cons S true null))
   (define I*
-    (compose (curry interpret #hash())
+    (compose (curry interpret types #hash())
              explicitize
              expand-top))
   (I* prog))
@@ -36,8 +37,8 @@
   (define Ex expand-top)
   (match stx
     ; also eliminate data?
-    #;[`((define-data ,xs ...) ,ys ...)
-       ys]
+    [`((define-data ,xs ...) ,ys ...)
+     (Ex ys)]
     [`((define ,id ,init) ,expr)
      `((,id → ,(Ex expr)) ,(Ex init))]
     [`((define ,id ,init) ,xs ...)
@@ -45,14 +46,14 @@
     [_ stx]))
 
 
-(define (extract-all-data t-env stx)
-  (foldr extract-data stx))
+(define (extract-all-data types stx)
+  (foldl extract-data types stx))
 
-(define (extract-data t-env stx)
+(define (extract-data stx types)
   (match stx
-    [`(define-data ,type ,cs ...)
-     (foldr (λ (env c) (hash-set env type c)) t-env)]
-    [_ t-env]))
+    [`(define-data ,type ,cs ...) ; below hack for n-ary constructors
+     (foldl (λ (c env) (hash-set env (if (list? c) (first c) c) type)) types cs)]
+    [a types]))
 
 ; make certain forms explicit
 (define (explicitize stx)
@@ -98,10 +99,10 @@
             ) pats tems)] ; prob should fold
     #;[stx stx]))
 
-(define (interpret env prog)
+(define (interpret types env prog)
   (define (constructor-id? id)
-    (member id '(cons S true null))) ; this is duplicate, refactor
-  (define I (curry interpret env))
+    (hash-has-key? types id))
+  (define I (curry interpret types env))
   #;(println prog)
   (match prog
     [`(var ,x) (hash-ref env x)] ;fix
@@ -112,7 +113,7 @@
     #;[`(cons ,a ,b) `(cons ,(I a) ,(I b))]
     ; adapt above to constructor case:
     [`(,(? constructor-id? id) ,a ,b)
-       `(,id ,(I a) ,(I b))]
+     `(,id ,(I a) ,(I b))]
     [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ;simple lc
     [`(,pat → ,body) `(c-new: ,pat ,body ,env)] ;other patterns
     [`(λ ,cases ...) `(c-fall: ,env ,@cases)] ;fallthru form
@@ -120,13 +121,13 @@
     ; above: need to fix fallthough code below rewriting to c-fall:
 
     [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
-     (interpret (hash-set c-env id a-val) body)]
+     (interpret types (hash-set c-env id a-val) body)]
     [`(app ,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
      (match (pattern-match a-val c-env pat)
        ['no-match 'no-match]
-       [new-env (interpret new-env body)])]
+       [new-env (interpret types new-env body)])]
     [`(app ,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
-     (match (interpret c-env `(app ,case1 ,a-val))
+     (match (interpret types c-env `(app ,case1 ,a-val))
        ['no-match (I `(app (c-fall: ,c-env ,@cases) ,a-val))]
        [result result])]))
 
@@ -237,20 +238,23 @@ actually: if we know the expr is a cons
 
 
   (test-equal? "cons 0"
-               (run-interpreter '((define a true)
-                                  #;(define-data Bool
-                                      true
-                                      false)
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define-data List
+                                    null
+                                    (cons Bool List))
+                                  (define a true)
                                   (cons true true)))
                '(cons true true))
   
   (test-equal? "basic cons"
-               (run-interpreter '(#;(define-data Bool
-                                      true
-                                      false)
-                                  #;(define-data List
-                                      null
-                                      (cons Bool List))
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define-data List
+                                    null
+                                    (cons Bool List))
                                   (define identity
                                     (λ #;(List → List)
                                       (null → null)
@@ -259,12 +263,12 @@ actually: if we know the expr is a cons
                '(cons true true))
 
   (test-equal? "flip cons"
-               (run-interpreter '(#;(define-data Bool
-                                      true
-                                      false)
-                                  #;(define-data List
-                                      null
-                                      (cons Bool List))
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define-data List
+                                    null
+                                    (cons Bool List))
                                   (define flip
                                     (λ #;(List → List)
                                       (null → null)

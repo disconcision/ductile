@@ -1,20 +1,58 @@
 #lang racket #| CSC324 SUMMER A1 PROPOSAL |#
 
 (define (run-interpreter prog)
+  (define original-data
+    '((define-data Bool
+        true
+        false)
+      #;(define-data Maybe-Bool
+          nothing
+          (just Bool))
+      #;(define-data Nat
+          zero
+          (S Nat))
+      #;(define-data List-Bool
+          null
+          (cons Bool List))))
+  (define nullary-type-lookup
+    #hash((true . Bool)
+          (false . Bool)
+          (nothing . Maybe-Bool)
+          (zero . Nat)
+          (null . List-Bool)))
+  (define n-ary-type-lookup
+    #hash(((just Bool) . Maybe-Bool)
+          ((S Nat) . Nat)
+          ((Cons Bool List-Bool) . List-Bool)))
+  (define type-lookup-hash nullary-type-lookup)
   (define I*
     (compose (curry interpret #hash())
              explicitize
              expand-top))
   (I* prog))
 
+
 (define (expand-top stx)
   (define Ex expand-top)
   (match stx
+    ; also eliminate data?
+    #;[`((define-data ,xs ...) ,ys ...)
+       ys]
     [`((define ,id ,init) ,expr)
      `((,id → ,(Ex expr)) ,(Ex init))]
     [`((define ,id ,init) ,xs ...)
      `((,id → ,(Ex xs)) ,(Ex init))]
     [_ stx]))
+
+
+(define (extract-all-data t-env stx)
+  (foldr extract-data stx))
+
+(define (extract-data t-env stx)
+  (match stx
+    [`(define-data ,type ,cs ...)
+     (foldr (λ (env c) (hash-set env type c)) t-env)]
+    [_ t-env]))
 
 ; make certain forms explicit
 (define (explicitize stx)
@@ -31,8 +69,6 @@
      `(λ ,@(map Ex cases))]
     [`(cons ,a ,b) `(cons ,(Ex a) ,(Ex b))]
     ; turn lists into cons or leave seperate?
-    #;[`(list ,xs ...) `(list ,@(map Ex xs))]
-    #;[`(+ ,xs ...) `(+ ,@(map Ex xs))]
     [`(,f ,x) `(app ,(Ex f) ,(Ex x))]
     [_ stx]))
 
@@ -46,16 +82,37 @@
     [`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
     [_ stx]))
 
+
+(define (type-check t-env prog)
+  (define T (curry type-check t-env))
+  (match prog
+    [`(var ,x) (hash-ref t-env x)]
+    [`(dat ,(or (? number? d) (? (curry hash-ref t-env) d))) d] ;fix
+    [`(λ (,p-type → ,r-type) (,pats → ,tems) ...)
+     ; check if p-type, r-type valid types
+     (map (λ (pat tem)
+            (match* ((T pat) (T tem)) ; might need to have sep fn for pat
+              [((== p-type) (== r-type))
+               'yes]
+              [(_ _) 'no])
+            ) pats tems)] ; prob should fold
+    #;[stx stx]))
+
 (define (interpret env prog)
+  (define (constructor-id? id)
+    (member id '(cons S true null))) ; this is duplicate, refactor
   (define I (curry interpret env))
   #;(println prog)
   (match prog
-    [`(var ,x) (hash-ref env x (λ () (void)))] ;fix
+    [`(var ,x) (hash-ref env x)] ;fix
     [`(dat ,d) d]
-    ['true 'true] ;hack!!!!
-    ['null 'null] ;ibid
-    [`(cons ,a ,b) `(cons ,(I a) ,(I b))]
+    ; should above case handle nullary constructors?
+    [(? constructor-id? id) id] ;hack!!!!
     
+    #;[`(cons ,a ,b) `(cons ,(I a) ,(I b))]
+    ; adapt above to constructor case:
+    [`(,(? constructor-id? id) ,a ,b)
+       `(,id ,(I a) ,(I b))]
     [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ;simple lc
     [`(,pat → ,body) `(c-new: ,pat ,body ,env)] ;other patterns
     [`(λ ,cases ...) `(c-fall: ,env ,@cases)] ;fallthru form
@@ -73,24 +130,53 @@
        ['no-match (I `(app (c-fall: ,c-env ,@cases) ,a-val))]
        [result result])]))
 
+
 (require racket/hash)
 (define (pattern-match arg c-env pat) ; returns env
+  (define (constructor-id? id)
+    (member id '(cons S)))
   (match pat
     [`(p-var ,id) (hash-set c-env id arg)]
     [`(p-dat ,d) 
      (if (equal? d arg) ;polymorphic equality extended by define-data?
          c-env
          'no-match)]
-    [`(cons ,p0 ,p1) ; in this case, maybe be many things to add
+    ['true 'true] ; hack
+    [`(,(? constructor-id? id) ,p0)
      (match arg
-       [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
-        (let ([temp1 (pattern-match a0 c-env p0)]
-              [temp2 (pattern-match a1 c-env p1)])
-          (if (or (equal? 'no-match temp1)
-                  (equal? 'no-match temp2))
-              'no-match
-              (hash-union temp1 temp2)))]
-       [_ 'no-match])]))
+       [`(,(== id) ,a0)
+        (pattern-match a0 c-env p0)]
+       [_ 'no-match])]
+    [`(,(? constructor-id? id) ,p0 ,p1)
+     (match arg
+       [`(,(== id) ,a0 ,a1)
+        (match* ((pattern-match a0 c-env p0)
+                 (pattern-match a1 c-env p1))
+          [('no-match _) 'no-match]
+          [(_ 'no-match) 'no-match]
+          [(e0 e1) (hash-union e0 e1)])]
+       [_ 'no-match])]
+    #;[`(,(? constructor-id? id) ,p-args ...)
+       (println "bzzz")
+       (define (tt env p-arg a-arg)
+         (match (pattern-match a-arg c-env p-arg)
+           ['no-match 'no-match]
+           [new-env (hash-union env new-env)]))
+       (match arg
+         [`(,(== id) ,a-args ...)
+          (foldr tt (hash) p-args a-args)]
+         [_ 'no-match])]
+    
+    #;[`(cons ,p0 ,p1) ; in this case, maybe be many things to add
+       (match arg
+         [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
+          (match* ((pattern-match a0 c-env p0)
+                   (pattern-match a1 c-env p1))
+            [('no-match _) 'no-match]
+            [(_ 'no-match) 'no-match]
+            [(e0 e1) (hash-union e0 e1)])]
+         [_ 'no-match])]
+    ))
 
 #|
 

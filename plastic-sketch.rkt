@@ -1,7 +1,6 @@
-;; The first three lines of this file were inserted by DrRacket. They record metadata
-;; about the language level of this file in a form that our tools can easily process.
-#reader(lib "2017-fall-reader.rkt" "csc104")((modname plastic-sketch) (compthink-settings #hash((prefix-types? . #f))))
 #lang racket
+
+(require racket/hash)
 
 #|
 
@@ -35,75 +34,91 @@ non-exhaustive case: (no case for (S (S zero)))
 maybe restrict exhaustiveness check to non-recursive,
 non-mututally-recursive types
 
+exhaustiveness refs: TODO
+
 |#
 
 
-  #;(define original-data
-      '((define-data Maybe-Bool
-            nothing
-            (just Bool))
-        (define-data Nat
-            zero
-            (S Nat))
-        (define-data List-Bool
-            null
-            (cons Bool List))))
-  #;(define nullary-type-lookup
-      #hash((true . Bool)
-            (false . Bool)
-            (nothing . Maybe-Bool)
-            (zero . Nat)
-            (null . List-Bool)))
-  #;(define n-ary-type-lookup
-      #hash(((just Bool) . Maybe-Bool)
-            ((S Nat) . Nat)
-            ((Cons Bool List-Bool) . List-Bool)))
-  #;(define type-lookup-hash nullary-type-lookup)
-  #;#;(println "prog:")(println prog)
-  #;#;(println "types:")(println types)
-  #;(define types '(cons S true null))
+; type stripper
+(define (strip-types stx)
+  (match stx
+    [`(λ ,type ,cases ...)
+     `(λ ,@cases)]
+    [`(,xs ...) (map strip-types stx)]
+    [_ stx]))
 
-
-(define (type-check t-env prog)
-  (define T (curry type-check t-env))
-  (match prog
-    [`(var ,x) (hash-ref t-env x)]
-    [`(dat ,(or (? number? d) (? (curry hash-ref t-env) d))) d] ;fix
-    [`(λ (,p-type → ,r-type) (,pats → ,tems) ...)
-     ; check if p-type, r-type valid types
-     (map (λ (pat tem)
-            (match* ((T pat) (T tem)) ; might need to have sep fn for pat
-              [((== p-type) (== r-type))
-               'yes]
-              [(_ _) 'no])
-            ) pats tems)] ; prob should fold
-    #;[stx stx]))
+; type checker
+; NOT FINISHED
+(define (type-check types t-env stx)
+  (define T (curry type-check types t-env))
+  (define (constructor-id? id)
+    (hash-has-key? types id))
+  (define (Tpat env parent-type stx) ;returns pair of type and env
+    (match stx
+      [(? constructor-id? id) (hash-ref types id)]
+      [`(,(? constructor-id? id) ,(app Tpat `(,types ,envs)) ...)
+       (match parent-type
+         [types (apply hash-union envs)] ; fix this
+         [_ (error "pat typefail")])]
+      [(? symbol? id)
+       (hash-set t-env id parent-type)]
+      ; need to get this type from parent?
+      ; base case (not inside constructor: get from type-dec
+      ))
+  (match stx
+    [(? constructor-id? id) (hash-ref types id)]
+    [`(,(? constructor-id? id) ,(and xs (not (== '→))) ...)
+     (match (hash-ref types id)
+       [`(,arg-types ... → ,ret-type)
+        (match (map T xs)
+          [(== arg-types) ret-type]
+          [_ (error "n-ary constructor typefail")])])]
+    [(? symbol? id) (hash-ref t-env id)]
+    [`(λ (,dec-arg-type → ,dec-ret-type) ,cases ...)
+     (define (f c env)
+       (define Tloc (curry type-check types env))
+       (match c
+         [`(,(app (curry Tpat env dec-arg-type) `(,c-arg-type ,new-env)) → ,(app Tloc c-ret-type))
+          (if (and (equal? dec-arg-type c-arg-type)
+                   (equal? dec-ret-type c-ret-type))
+              `(,dec-arg-type → ,dec-ret-type)
+              (error "lambda typefail"))
+          ]))
+     (foldl f t-env cases)]
+    [`(,(app T `(,param-type → ,ret-type)) ,(app T arg-type))
+     (match arg-type
+       [(== param-type) ret-type]
+       [_ (error "app typefail")])]
+    ))
 
 
 ; make certain forms explicit
 (define (explicitize stx)
   (define Ex explicitize)
   (define Px pattern-explicitize)
+  (define constructor-id? 0)
   (match stx
-    ['null `(dat null)]
-    ['true `(dat true)]
-    [(? symbol?) `(var ,stx)]
-    [(? number?) `(dat ,stx)]
+    [(? constructor-id? id) `(dat ,id)]
+    [(? symbol? id) `(var ,id)]
     [`(,pat → ,expr)
-     `(,(Px pat) → ,(Ex expr))]
+     `(fun ,(Px pat) ,(Ex expr))]
     [`(λ ,cases ...)
-     `(λ ,@(map Ex cases))]
-    [`(cons ,a ,b) `(cons ,(Ex a) ,(Ex b))]
-    ; turn lists into cons or leave seperate?
+     `(fal ,@(map Ex cases))]
+    #;[`(cons ,a ,b) `(cons ,(Ex a) ,(Ex b))]
+    [`(,(? constructor-id? id) ,xs ...)
+     `(dat ,id ,@(map Ex xs) )]
     [`(,f ,x) `(app ,(Ex f) ,(Ex x))]
-    [_ stx]))
+    #;[_ stx]))
 
+; make pattern forms explicit
+; needs to be adapted to ADTs
 (define (pattern-explicitize stx)
   (define Px pattern-explicitize)
+  (define constructor-id? 0)
   (match stx
-    ['null `(p-dat null)]
-    ['true `(p-dat true)]
+    [(? constructor-id? id) `(p-dat ,id)]
     [(? symbol?) `(p-var ,stx)]
-    [(? number?) `(p-dat ,stx)] ; or use P==
-    [`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
-    [_ stx]))
+    [`(,(? constructor-id? id) ,xs ...)
+     `(p-dat ,id ,@(map Px xs) )]
+    #;[`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
+    #;[_ stx]))

@@ -49,12 +49,10 @@ This could be added as a seperate layer
 
 (define (run prog)
   (define types (foldl extract-data (hash) prog))
-  (println types)
-  (define I*
-    (compose (curry interpret types #hash())
-             expand-top))
-  (I* prog))
-
+  #;(println types)
+  ((compose (curry interpret types #hash())
+             expand-top)
+   prog))
 
 (define (expand-top stx)
   (define Ex expand-top)

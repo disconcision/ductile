@@ -3,6 +3,41 @@
 #reader(lib "2017-fall-reader.rkt" "csc104")((modname plastic-sketch) (compthink-settings #hash((prefix-types? . #f))))
 #lang racket
 
+#|
+
+Current design factors out all static checking.
+Static checking possibilities:
+1. type-checking with explicit declarations:
+decorate all λ-forms (and eliminate λ-less arrows) with a type-dec
+constructor checking (including constructor arity) should be able to
+piggy-back on this checking (do we even need to distinguish fns/constructors?)
+2. exhaustiveness checking:
+simpler if we have type decs... otherwise we need more logic to determine
+which type we're trying to exhaust. for only nullary constructors: begin
+with a set of all instances of the type; remove as they are seen, or
+until a wildcard is found. if we reach the end of the list and the set
+is non-empty, then it's not exhaustive.
+for n-ary constructors:
+idea 1: recursively fill initial set.
+i.e. for n-ary constructors, add all variants to se
+problem: recursive types (seems fatal)
+the below is exhaustive:
+[zero ?]
+[(S zero) ?]
+[(S (S zero)) ?]
+[(S a) ?]
+if type is recusive, seems like we'd eventually need a wildcard
+non-exhaustive case: (no case for (S (S zero)))
+[zero ?]
+[(S zero) ?]
+[(S (S (S a))) ?]
+
+maybe restrict exhaustiveness check to non-recursive,
+non-mututally-recursive types
+
+|#
+
+
   #;(define original-data
       '((define-data Maybe-Bool
             nothing

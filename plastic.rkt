@@ -1,34 +1,9 @@
 #lang racket #| CSC324 SUMMER A1 PROPOSAL |#
 
 (define (run-interpreter prog)
-  #;(define original-data
-      '((define-data Maybe-Bool
-            nothing
-            (just Bool))
-        (define-data Nat
-            zero
-            (S Nat))
-        (define-data List-Bool
-            null
-            (cons Bool List))))
-  #;(define nullary-type-lookup
-      #hash((true . Bool)
-            (false . Bool)
-            (nothing . Maybe-Bool)
-            (zero . Nat)
-            (null . List-Bool)))
-  #;(define n-ary-type-lookup
-      #hash(((just Bool) . Maybe-Bool)
-            ((S Nat) . Nat)
-            ((Cons Bool List-Bool) . List-Bool)))
-  #;(define type-lookup-hash nullary-type-lookup)
-  #;#;(println "prog:")(println prog)
-  (define types (extract-all-data (hash) prog))
-  #;#;(println "types:")(println types)
-  #;(define types '(cons S true null))
+  (define types (foldl extract-data (hash) prog))
   (define I*
     (compose (curry interpret types #hash())
-             explicitize
              expand-top))
   (I* prog))
 
@@ -36,7 +11,7 @@
 (define (expand-top stx)
   (define Ex expand-top)
   (match stx
-    ; also eliminate data?
+    ; eliminate data form (which was already extracted)
     [`((define-data ,xs ...) ,ys ...)
      (Ex ys)]
     [`((define ,id ,init) ,expr)
@@ -46,129 +21,64 @@
     [_ stx]))
 
 
-(define (extract-all-data types stx)
-  (foldl extract-data types stx))
-
 (define (extract-data stx types)
   (match stx
     [`(define-data ,type ,cs ...) ; below hack for n-ary constructors
      (foldl (λ (c env) (hash-set env (if (list? c) (first c) c) type)) types cs)]
     [a types]))
 
-; make certain forms explicit
-(define (explicitize stx)
-  (define Ex explicitize)
-  (define Px pattern-explicitize)
-  (match stx
-    ['null `(dat null)]
-    ['true `(dat true)]
-    [(? symbol?) `(var ,stx)]
-    [(? number?) `(dat ,stx)]
-    [`(,pat → ,expr)
-     `(,(Px pat) → ,(Ex expr))]
-    [`(λ ,cases ...)
-     `(λ ,@(map Ex cases))]
-    [`(cons ,a ,b) `(cons ,(Ex a) ,(Ex b))]
-    ; turn lists into cons or leave seperate?
-    [`(,f ,x) `(app ,(Ex f) ,(Ex x))]
-    [_ stx]))
-
-(define (pattern-explicitize stx)
-  (define Px pattern-explicitize)
-  (match stx
-    ['null `(p-dat null)]
-    ['true `(p-dat true)]
-    [(? symbol?) `(p-var ,stx)]
-    [(? number?) `(p-dat ,stx)] ; or use P==
-    [`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
-    [_ stx]))
-
-
-(define (type-check t-env prog)
-  (define T (curry type-check t-env))
-  (match prog
-    [`(var ,x) (hash-ref t-env x)]
-    [`(dat ,(or (? number? d) (? (curry hash-ref t-env) d))) d] ;fix
-    [`(λ (,p-type → ,r-type) (,pats → ,tems) ...)
-     ; check if p-type, r-type valid types
-     (map (λ (pat tem)
-            (match* ((T pat) (T tem)) ; might need to have sep fn for pat
-              [((== p-type) (== r-type))
-               'yes]
-              [(_ _) 'no])
-            ) pats tems)] ; prob should fold
-    #;[stx stx]))
 
 (define (interpret types env prog)
   (define (constructor-id? id)
     (hash-has-key? types id))
   (define I (curry interpret types env))
-  #;(println prog)
+  (println prog)
   (match prog
-    [`(var ,x) (hash-ref env x)] ;fix
-    [`(dat ,d) d]
-    ; should above case handle nullary constructors?
-    [(? constructor-id? id) id] ;hack!!!!
-    
-    #;[`(cons ,a ,b) `(cons ,(I a) ,(I b))]
-    ; adapt above to constructor case:
-    [`(,(? constructor-id? id) ,a ,b)
-     `(,id ,(I a) ,(I b))]
-    [`((p-var ,id) → ,body) `(c: ,id ,body ,env)] ;simple lc
+    [(? constructor-id? id) id]
+    [(? symbol? id) (hash-ref env id)]
+    [(? number? d) d]
+
+    [`(,(and (? symbol? id) (not (? constructor-id?))) → ,body) `(c: ,id ,body ,env)] ;simple lc
     [`(,pat → ,body) `(c-new: ,pat ,body ,env)] ;other patterns
+    [`(,(? constructor-id? id) ,xs ...)
+     `(,id ,@(map I xs))] ; this case is dangerously order-dep (can capture →)
+
     [`(λ ,cases ...) `(c-fall: ,env ,@cases)] ;fallthru form
     [`(c-fall: ,blah ...) prog] ; hack
     ; above: need to fix fallthough code below rewriting to c-fall:
 
-    [`(app ,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
+    [`(,(app I `(c: ,id ,body ,c-env)) ,(app I a-val))
      (interpret types (hash-set c-env id a-val) body)]
-    [`(app ,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
-     (match (pattern-match a-val c-env pat)
+    [`(,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
+     (match (pattern-match types a-val c-env pat)
        ['no-match 'no-match]
        [new-env (interpret types new-env body)])]
-    [`(app ,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
-     (match (interpret types c-env `(app ,case1 ,a-val))
-       ['no-match (I `(app (c-fall: ,c-env ,@cases) ,a-val))]
+    [`(,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
+     (match (interpret types c-env `(,case1 ,a-val))
+       ['no-match (I `((c-fall: ,c-env ,@cases) ,a-val))]
        [result result])]))
 
 
 (require racket/hash)
-(define (pattern-match arg c-env pat) ; returns env
+(define (pattern-match types arg c-env pat) ; returns env
   (define (constructor-id? id)
-    (member id '(cons S)))
+    (hash-has-key? types id))
   (match pat
-    [`(p-var ,id) (hash-set c-env id arg)]
-    [`(p-dat ,d) 
+    [(? constructor-id? d)
      (if (equal? d arg) ;polymorphic equality extended by define-data?
          c-env
          'no-match)]
-    ['true 'true] ; hack
-    [`(,(? constructor-id? id) ,p0)
+    [(? symbol? id) (hash-set c-env id arg)]
+    [`(,(? constructor-id? id) ,p-args ...)
+     (define (cons-help p-arg a-arg env)
+       (match (pattern-match types a-arg c-env p-arg)
+         ['no-match 'no-match]
+         [new-env (hash-union env new-env)]))
      (match arg
-       [`(,(== id) ,a0)
-        (pattern-match a0 c-env p0)]
+       [`(,(== id) ,a-args ...)
+        (foldr cons-help (hash) p-args a-args)]
        [_ 'no-match])]
-    [`(,(? constructor-id? id) ,p0 ,p1)
-     (match arg
-       [`(,(== id) ,a0 ,a1)
-        (match* ((pattern-match a0 c-env p0)
-                 (pattern-match a1 c-env p1))
-          [('no-match _) 'no-match]
-          [(_ 'no-match) 'no-match]
-          [(e0 e1) (hash-union e0 e1)])]
-       [_ 'no-match])]
-    #;[`(,(? constructor-id? id) ,p-args ...)
-       (println "bzzz")
-       (define (tt env p-arg a-arg)
-         (match (pattern-match a-arg c-env p-arg)
-           ['no-match 'no-match]
-           [new-env (hash-union env new-env)]))
-       (match arg
-         [`(,(== id) ,a-args ...)
-          (foldr tt (hash) p-args a-args)]
-         [_ 'no-match])]
-    
-    #;[`(cons ,p0 ,p1) ; in this case, maybe be many things to add
+    #;[`(cons ,p0 ,p1)
        (match arg
          [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
           (match* ((pattern-match a0 c-env p0)
@@ -211,33 +121,46 @@ actually: if we know the expr is a cons
 (module+ test
   (require rackunit)
 
-  (test-equal? "defines -> local lambda app"
-               ((compose explicitize expand-top) '((define x 1) x))
-               #;'((x → x) 1)
-               '(app ((p-var x) → (var x)) (dat 1)))
+  (test-equal? "define"
+               (expand-top '((define-data Void void)
+                             (define x void)
+                             x))
+               '((x → x) void))
   
-  (test-equal? "multi define"
-               ((compose explicitize expand-top) '((define x 1) (define y 2) y))
-               #;'((x → ((y → y) 2)) 1)
-               '(app ((p-var x) → (app ((p-var y) → (var y)) (dat 2))) (dat 1)))
+  (test-equal? "two defines"
+               (expand-top '((define-data Bool
+                               true
+                               false)
+                             (define x true)
+                             (define y false)
+                             y))
+               '((x → ((y → y) false)) true))
   
-  (test-equal? "multi define 2"
-               ((compose explicitize expand-top) '((define x 1) (define y 2) x))
-               '(app ((p-var x) → (app ((p-var y) → (var x)) (dat 2))) (dat 1)))
+  (test-equal? "two defines 2"
+               (expand-top '((define-data Bool
+                               true
+                               false)
+                             (define x true)
+                             (define y false)
+                             x))
+               '((x → ( (y → x) false)) true))
   
-  (test-equal? "define scope"
-               ((compose explicitize expand-top) '((define x 1) (define y x) y))
-               #;'((x → ((y → y) x)) 1)
-               '(app ((p-var x) → (app ((p-var y) → (var y)) (var x))) (dat 1)))
+  (test-equal? "two defines scope"
+               (expand-top '((define-data Void void)
+                             (define x void)
+                             (define y x) y))
+               '((x → ((y → y) x)) void))
 
-  (test-equal? "Numeric literal" (run-interpreter '((define q 1) 3)) 3)
+  (test-equal? "just literal"
+               (run-interpreter '((define-data Bool
+                                    true
+                                    false)
+                                  (define q true)
+                                  false))
+               'false)
 
-  #;(test-equal? "addition"
-                 (run-interpreter '((define q 1) (+ 1 2 (+ (+ 3) 4 5) 6)))
-                 21)
 
-
-  (test-equal? "cons 0"
+  (test-equal? "cons with var"
                (run-interpreter '((define-data Bool
                                     true
                                     false)
@@ -245,10 +168,10 @@ actually: if we know the expr is a cons
                                     null
                                     (cons Bool List))
                                   (define a true)
-                                  (cons true true)))
+                                  (cons true a)))
                '(cons true true))
   
-  (test-equal? "basic cons"
+  (test-equal? "cons identity"
                (run-interpreter '((define-data Bool
                                     true
                                     false)
@@ -262,7 +185,7 @@ actually: if we know the expr is a cons
                                   (identity (cons true true))))
                '(cons true true))
 
-  (test-equal? "flip cons"
+  (test-equal? "cons flip"
                (run-interpreter '((define-data Bool
                                     true
                                     false)

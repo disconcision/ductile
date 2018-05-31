@@ -2,6 +2,43 @@
 
 (require racket/hash)
 
+
+#| haskell-style multiline fn defs
+
+fold down list until BUT NOT INCLUDING LAST ELEMENT (expr)
+while carrying a value called last-fn
+append to a λ in the same define. if the first elem of current line is not last-fn
+then create a new define λ
+
+|#
+
+; want to turn this:
+#;((right-prog a true → true)
+   (right-proj a b → b)
+   (id a → a)
+   true)
+; into this:
+#;((define right-proj
+    (λ 
+      (a true → true)
+      (a b → (cons b a))))
+   (define id
+    (λ 
+      (a → a)))
+   true)
+
+; concrete pattern-matching clause for manual cons pattern:
+; (excerpted from plastic/pattern-match)
+#;[`(cons ,p0 ,p1)
+   (match arg
+     [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
+      (match* ((Pm a0 p0)
+               (Pm a1 p1))
+        [('no-match _) 'no-match]
+        [(_ 'no-match) 'no-match]
+        [(e0 e1) (hash-union e0 e1)])]
+     [_ 'no-match])]
+
 #|
 
 Current design factors out all static checking.

@@ -48,7 +48,7 @@ This could be added as a seperate layer
 |#
 
 (define (run prog)
-  (define types (foldl extract-data (hash) prog))
+  (define types (foldl extract-data #hash() prog))
   #;(println types)
   ((compose (curry interpret types #hash())
             expand-top)
@@ -79,14 +79,6 @@ This could be added as a seperate layer
             types cs)]
     [_ types]))
 
-#;(define (foldM f acc ls)
-    (match ls
-      ['() acc]
-      [`(,x ,xs ...)
-       (match (f x acc)
-         ['no-match (foldM f 'no-match xs)]
-         [res res])]))
-
 
 (define (interpret types env prog)
   (define (constructor-id? id)
@@ -95,30 +87,31 @@ This could be added as a seperate layer
   #;(println prog)
   (match prog
     [(? constructor-id? id) id]
+    
     ; added not clause to make following case less order-dependent
     [`(,(? constructor-id? id) ,(and xs (not (== '→))) ...)
      `(,id ,@(map I xs))]
     [(? symbol? id) (hash-ref env id)]
     
     ; λ here means 'fallthrough' and (_ → _) is actually a lambda
-    [`(,pat → ,body) `(c: ,pat ,body ,env)]
+    [`(,pats ... → ,body) `(c: ,env ,body ,@pats)]
     [`(λ ,cases ...) `(c-fall: ,env ,@cases)]
 
     ; fallthrough case
-    [`(,(app I `(c-fall: ,c-env ,cases ...)) ,(app I a-val))
-     (define (f a-case acc)
-       (match acc
-         ['no-match (interpret types c-env `(,a-case ,a-val))]
-         [result result]))
-     (foldl f 'no-match cases)]
+    [`(,(app I `(c-fall: ,c-env ,cases ...)) ,(app I a-vals) ...)
+     (foldl (λ (a-case acc)
+              (match acc
+                ['no-match (interpret types c-env `(,a-case ,@a-vals))]
+                [result result]))
+            'no-match
+            cases)]
 
-    ; actual application case
-    [`(,(app I `(c: ,pat ,body ,c-env)) ,(app I a-val))
-     (match (pattern-match types c-env a-val pat)
-       ['no-match 'no-match]
-       [new-env (interpret types new-env body)])]
-    ))
-
+    ; application: notice how pattern-match handles lists
+    ; of arguments the same as it does constructors
+    [`(,(app I `(c: ,c-env ,body ,pats ...)) ,(app I args) ...)
+     (match (pattern-match types c-env args pats)
+           ['no-match 'no-match]
+           [new-env (interpret types new-env body)])]))
 
 
 (define (pattern-match types c-env arg pat) ; returns env
@@ -135,16 +128,12 @@ This could be added as a seperate layer
     [(? symbol? id)
      (hash-set c-env id arg)]
     ; constructor case:
-    [`(,(? constructor-id? id) ,p-args ...)
-     (define (f p-arg a-arg env)
-       (match (Pm a-arg p-arg)
-         ['no-match 'no-match]
-         [new-env (hash-union env new-env)]))
-     (match arg
-       [`(,(== id) ,a-args ...)
-        (foldl f (hash) p-args a-args)] ; changed from foldr; test
-       [_ 'no-match])]
-    ))
+    [(? list?)
+       (foldl (λ (arg pat env)
+                (pattern-match types env arg pat))
+              c-env
+              arg
+              pat)]))
 
 
 (module+ test
@@ -260,6 +249,39 @@ This could be added as a seperate layer
                           (false → false)))
                       (just (identity true))))
                '(just true))
+
+  (test-equal? "and"
+               (run '((define-data Bool
+                        true
+                        false)
+                      (define-data Maybe-Bool
+                        Nothing
+                        (just Bool))
+                      (define and
+                        (λ #;(Bool Bool → Bool)
+                          (true true → true)
+                          (false true → false)
+                          (true false → false)
+                          (false false → false)))
+                      (just (and true false))))
+               '(just false))
+
+  (test-equal? "const-left"
+               (run '((define-data Bool
+                        true
+                        false)
+                      (define-data Maybe-Bool
+                        Nothing
+                        (just Bool))
+                      (define-data List
+                        null
+                        (cons Bool List))
+                      (define right-proj
+                        (λ #;(Bool Bool → Bool)
+                          (a true → true)
+                          (a b → (cons b a))))
+                      (right-proj true false)))
+               '(cons false true))
 
   #;
   (test-equal? "recursive datatype"

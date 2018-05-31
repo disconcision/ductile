@@ -51,7 +51,7 @@ This could be added as a seperate layer
   (define types (foldl extract-data (hash) prog))
   #;(println types)
   ((compose (curry interpret types #hash())
-             expand-top)
+            expand-top)
    prog))
 
 (define (expand-top stx)
@@ -72,12 +72,20 @@ This could be added as a seperate layer
   (match stx
     [`(define-data ,type ,cs ...)
      (foldl (λ (c env)
-              (hash-set env
-                        (if (list? c) (first c) c)
-                        ; gADT-style fn type sigs for non-nullary constructors
-                        (if (list? c) `(,@(rest c) → ,type) type)))
+              (match c
+                [`(,x ,xs ...) (hash-set env x `(,@xs → ,type))]
+                ; gADT-style fn type sigs for non-nullary constructors
+                [_ (hash-set env c type)]))
             types cs)]
     [_ types]))
+
+#;(define (foldM f acc ls)
+    (match ls
+      ['() acc]
+      [`(,x ,xs ...)
+       (match (f x acc)
+         ['no-match (foldM f 'no-match xs)]
+         [res res])]))
 
 
 (define (interpret types env prog)
@@ -87,19 +95,25 @@ This could be added as a seperate layer
   #;(println prog)
   (match prog
     [(? constructor-id? id) id]
+    ; added not clause to make following case less order-dependent
     [`(,(? constructor-id? id) ,(and xs (not (== '→))) ...)
-     `(,id ,@(map I xs))] ; this case is dangerously order-dep (can capture →)
+     `(,id ,@(map I xs))]
     [(? symbol? id) (hash-ref env id)]
-
-    [`(,pat → ,body) `(c-new: ,pat ,body ,env)]
-    [`(λ ,cases ...) `(c-fall: ,env ,@cases)] ;fallthru closure
-    [`(c-fall: ,blah ...) prog] ; hack (see 'hacky' below)
     
-    [`(,(app I `(c-fall: ,c-env ,case1 ,cases ...)) ,(app I a-val))
-     (match (interpret types c-env `(,case1 ,a-val))
-       ['no-match (I `((c-fall: ,c-env ,@cases) ,a-val))] ; hacky
-       [result result])]
-    [`(,(app I `(c-new: ,pat ,body ,c-env)) ,(app I a-val))
+    ; λ here means 'fallthrough' and (_ → _) is actually a lambda
+    [`(,pat → ,body) `(c: ,pat ,body ,env)]
+    [`(λ ,cases ...) `(c-fall: ,env ,@cases)]
+
+    ; fallthrough case
+    [`(,(app I `(c-fall: ,c-env ,cases ...)) ,(app I a-val))
+     (define (f a-case acc)
+       (match acc
+         ['no-match (interpret types c-env `(,a-case ,a-val))]
+         [result result]))
+     (foldl f 'no-match cases)]
+
+    ; actual application case
+    [`(,(app I `(c: ,pat ,body ,c-env)) ,(app I a-val))
      (match (pattern-match types c-env a-val pat)
        ['no-match 'no-match]
        [new-env (interpret types new-env body)])]
@@ -112,29 +126,24 @@ This could be added as a seperate layer
   (define (constructor-id? id)
     (hash-has-key? types id))
   (match pat
+    ; nullary datum case:
     [(? constructor-id? d)
-     (if (equal? d arg) ;polymorphic equality extended by define-data?
-         c-env
-         'no-match)]
-    [(? symbol? id) (hash-set c-env id arg)]
+     (match arg
+       [(== d) c-env]
+       [_ 'no-match])]
+    ; var case:
+    [(? symbol? id)
+     (hash-set c-env id arg)]
+    ; constructor case:
     [`(,(? constructor-id? id) ,p-args ...)
-     (define (cons-help p-arg a-arg env)
+     (define (f p-arg a-arg env)
        (match (Pm a-arg p-arg)
          ['no-match 'no-match]
          [new-env (hash-union env new-env)]))
      (match arg
        [`(,(== id) ,a-args ...)
-        (foldr cons-help (hash) p-args a-args)]
+        (foldl f (hash) p-args a-args)] ; changed from foldr; test
        [_ 'no-match])]
-    #;[`(cons ,p0 ,p1)
-       (match arg
-         [`(cons ,a0 ,a1) ;rewrite to not use pattern-matching lol
-          (match* ((Pm a0 p0)
-                   (Pm a1 p1))
-            [('no-match _) 'no-match]
-            [(_ 'no-match) 'no-match]
-            [(e0 e1) (hash-union e0 e1)])]
-         [_ 'no-match])]
     ))
 
 

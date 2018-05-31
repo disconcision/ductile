@@ -38,6 +38,95 @@ exhaustiveness refs: TODO
 
 |#
 
+; pattern matching to lc-ish compilation tests
+(define (compiler pat-tem)
+  (match pat-tem
+    [`(,pat ,tem)
+     `(λ (e) (ifls e)
+        ,(match pat
+           [(? 'XXX-constructor-id?)
+            0]
+           [(? symbol?)
+            0]
+           [`(,(? 'XXX-constructor-id?) ,xs ...)
+            0]))])
+  )
+(define types #hash((null . List)
+                    (just . (Bool → Maybe-Bool))))
+
+
+; below needs to be non-strict in stx
+#;(define (ifne name stx)
+    (λ (X)
+      (if (equal? name X)
+          stx
+          'no-match)))
+#;(define (ifls e stx)
+    (λ (X)
+      (if (list? e)
+          stx
+          'no-match)))
+
+
+(module+ test
+  (require rackunit)
+  (check-equal? (compiler '(a tem))
+                '(λ (a)
+                   tem))
+  (check-equal? (compiler '(null tem))
+                '(λ (e)
+                   (ifne null tem
+                         e)))
+  ; below: check if evaluated expression e is list first?
+  (check-equal? (compiler '((just a) tem))
+                '(λ (e) (ifls e
+                              (ifne just ((λ (a)
+                                            tem)
+                                          (car (cdr e)))
+                                    (car e))
+                              )))
+  
+  (check-equal? (compiler '((cons a b) tem))
+                '(λ (e) (ifls e
+                              (ifne cons
+                                    ((λ (a)
+                                       ((λ (b) tem)
+                                        (car (cdr (cdr e)))))
+                                     (car (cdr e)))
+                                    (car e))
+                              )))
+
+  ; do we need to check for null? is thre a situation in
+  ; which the first symbol could match and the list is
+  ; a different length?
+  
+  ; here A and B (but not a, b, c) are constructor names:
+  (check-equal? (compiler '((A a b B c) tem))
+                '(λ (e) (ifls e
+                              (ifne A
+                                    ((λ (a)
+                                       ((λ (b)
+                                          (ifne B
+                                                ((λ (c)
+                                                   tem)
+                                                 (car (cdr (cdr (cdr (cdr e))))))
+                                                (car (cdr (cdr (cdr e))))))
+                                        (car (cdr (cdr e)))))
+                                     (car (cdr e)))
+                                    (car e)))))
+
+  ; more sensible format:
+  (check-equal? (compiler '((A a b B c) tem))
+                '(λ (e) (ifls e
+                              (ifne A (car e)
+                                    (let a (car (cdr e))
+                                      (let b (car (cdr (cdr e)))
+                                        (ifne B (car (cdr (cdr (cdr e))))
+                                              (let c (car (cdr (cdr (cdr (cdr e)))))
+                                                tem))))))))
+  )
+
+
 
 ; type stripper
 (define (strip-types stx)
@@ -48,7 +137,7 @@ exhaustiveness refs: TODO
     [_ stx]))
 
 ; type checker
-; NOT FINISHED
+; DETAILED SKETCH - NOT TEST DRIVEN
 (define (type-check types t-env stx)
   (define T (curry type-check types t-env))
   (define (constructor-id? id)

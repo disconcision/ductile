@@ -47,10 +47,49 @@ we want U* to satisty:
    ∃v (and (not (M-instance? M v)) (instance? q v)))
 
 we attempt to implement U* as U
+
+note important invariant:
+U is invariant under reordering of rows
+this will allow us to usefully decompose M
+  without worrying about interaction
+
  |#
 (define (U M q)
-  (match M
-    [0 0]))
+  (match* (M q)
+    [(`()  _) #true] ; empty matrix
+    [(`(() ...) `()) #false] ; matrix of empty rows
+    [(`((,x ,xs...) ...) `(,q1 ,qs ...))
+     (match q1
+       [`(,(? cnst? c) ,rs ...)
+        (U (S c M) (S c q))]
+       [`_
+        (if (complete-signature? (signature-in x))
+            ; actually maybe note that first col of M is x
+            (ormap (λ (c) (U (S c M) (S c q)))
+                   (signature-in x))
+            #t)] ; count signature. for exhaustiveness, skip incomp case
+       )]
+    ))
+
+(define complete-signature? 0)
+(define (signature-in col)
+  (foldl (λ (x acc)
+           (match x
+             ))
+         (set)
+         col))
+
+(define (S c M)
+  (apply map append
+         (match-lambda
+           [`(_ ,ps ...) ; note this is '_ 
+            `((,@(make-list '_ (length (transpose M))) ,@ps))]
+           ; note we might need to readjust below a bit
+           ; because is assumes nullary cntrs are written like (c)
+           [`((,(== c) ,rs ...) ,ps ...)
+            `((,@rs ,@ps))]
+           [`((,(and (? cnst?) (not (== c))) ,rs ...) ,ps ...)
+            `()])))
 
 #|
   U lets us define the following:

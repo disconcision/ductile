@@ -68,24 +68,34 @@ This could be added as a seperate layer
     [_ stx]))
 
 
+#| this rewrites a sequence of haskell-style inline function
+   defs with an expr on the end into a sequence of defines.
+   if this was done without the intermediary defines, the
+   method needs to be adapted since matching on the (now nested)
+   accumulator gets harder. (maybe do it bottom-up?) |#
 (define (rewrite-haskdefs stx)
   (foldl
    (λ (c acc)
      (match* (c acc)
+       ; first partial def (acc is empty)
        [(`(,fn-name ,params ... → ,body)
-         '())
+         `())
         `((define ,fn-name (λ (,@params → ,body))))]
+       ; check if we're still on the same fn
        [(`(,fn-name ,params ... → ,body)
-         `(,xs ... (define ,last-fn-name (λ ,ys ...))))
-        (if (equal? fn-name last-fn-name)
-            `(,@xs (define ,last-fn-name (λ ,@ys (,@params → ,body))))
-            `(,@xs (define ,last-fn-name (λ ,@ys))
+         `(,xs ... (define ,prev-fn-name (λ ,ys ...))))
+        (if (equal? fn-name prev-fn-name)
+            `(,@xs (define ,prev-fn-name (λ ,@ys (,@params → ,body))))
+            `(,@xs (define ,prev-fn-name (λ ,@ys))
                    (define ,fn-name (λ (,@params → ,body)))))]
+       ; append trailing expr
        [(expr res) `(,@res ,expr)]))
    '()
    stx))
 
 
+#| returns a hash containing the type data extracted
+   from the define-data forms |#
 (define (extract-data stx types)
   (match stx
     [`(define-data ,type ,cs ...)
@@ -131,7 +141,8 @@ This could be added as a seperate layer
        [new-env (interpret types new-env body)])]))
 
 
-(define (pattern-match types c-env arg pat) ; returns env
+#| matches arg to pat and returns a hash of bound variables |#
+(define (pattern-match types c-env arg pat)
   (define Pm (curry pattern-match types c-env))
   (define (constructor-id? id)
     (hash-has-key? types id))

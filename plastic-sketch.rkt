@@ -3,6 +3,63 @@
 (require racket/hash)
 
 
+; exhaustiveness following Maranget (Warnings for pattern matching)
+
+; grammar
+#; (pattern ((cons pattern pattern)
+             (just pattern)
+             void
+             null))
+
+#| simplifying assumptions:
+   1. all patterns are linear, so we can reduce named
+   pattern variables to a generic wildcard
+
+
+|#
+
+(define Msample '(( (cons null _)  (cons (cons _ _) _)    )
+                  ( (just null)    (cons _ (cons null _)) )
+                  ( (cons _ _)     (cons null (cons _ _)) )
+                  (  null           _                     )
+                  (  void           _                     )))
+
+(define constants '(cons just null void))
+(define transpose (curry apply map list))
+(define (row M) (curry list-ref M))
+(define (col M) (curry list-ref (transpose M)))
+(define cnst? (curryr member constants))
+(define/match (instance? pattern value)
+  [(  '_        _        ) #true]
+  [( (? cnst?) (? cnst?) ) (equal? pattern value)]
+  [( (? list?) (? list?) ) (and (equal? (length pattern) (length value))
+                                (andmap instance? pattern value))]
+  [(  _         _        ) #false])
+(define (M-instance? M v) (ormap (curryr instance? v) M))
+(define Msample-transpose (transpose Msample))
+(define (dimensions M)
+  `(,(length M) ,(length (first M))))
+
+#| let M be a match matrix and q a vector of values whose
+   length is the same as the number of columns of M.
+
+we want U* to satisty:
+   ∃v (and (not (M-instance? M v)) (instance? q v)))
+
+we attempt to implement U* as U
+ |#
+(define (U M q)
+  (match M
+    [0 0]))
+
+#|
+  U lets us define the following:
+|#
+(define (exhaustive? M)
+  (not (U M (make-list '_ (length (transpose M))))))
+(define (redundant? M row) ; remove row from M first
+  (not (U M row)))
+
 
 ; concrete pattern-matching clause for manual cons pattern:
 ; (excerpted from plastic/pattern-match)
@@ -82,63 +139,63 @@ exhaustiveness refs: TODO
           'no-match)))
 
 
-(module+ test
-  (require rackunit)
-  (check-equal? (compiler '(a tem))
-                '(λ (a)
-                   tem))
-  (check-equal? (compiler '(null tem))
-                '(λ (e)
-                   (ifne null tem
-                         e)))
-  ; below: check if evaluated expression e is list first?
-  (check-equal? (compiler '((just a) tem))
-                '(λ (e) (ifls e
-                              (ifne just ((λ (a)
-                                            tem)
-                                          (car (cdr e)))
-                                    (car e))
-                              )))
+#;(module+ test
+    (require rackunit)
+    (check-equal? (compiler '(a tem))
+                  '(λ (a)
+                     tem))
+    (check-equal? (compiler '(null tem))
+                  '(λ (e)
+                     (ifne null tem
+                           e)))
+    ; below: check if evaluated expression e is list first?
+    (check-equal? (compiler '((just a) tem))
+                  '(λ (e) (ifls e
+                                (ifne just ((λ (a)
+                                              tem)
+                                            (car (cdr e)))
+                                      (car e))
+                                )))
   
-  (check-equal? (compiler '((cons a b) tem))
-                '(λ (e) (ifls e
-                              (ifne cons
-                                    ((λ (a)
-                                       ((λ (b) tem)
-                                        (car (cdr (cdr e)))))
-                                     (car (cdr e)))
-                                    (car e))
-                              )))
+    (check-equal? (compiler '((cons a b) tem))
+                  '(λ (e) (ifls e
+                                (ifne cons
+                                      ((λ (a)
+                                         ((λ (b) tem)
+                                          (car (cdr (cdr e)))))
+                                       (car (cdr e)))
+                                      (car e))
+                                )))
 
-  ; do we need to check for null? is thre a situation in
-  ; which the first symbol could match and the list is
-  ; a different length?
+    ; do we need to check for null? is thre a situation in
+    ; which the first symbol could match and the list is
+    ; a different length?
   
-  ; here A and B (but not a, b, c) are constructor names:
-  (check-equal? (compiler '((A a b B c) tem))
-                '(λ (e) (ifls e
-                              (ifne A
-                                    ((λ (a)
-                                       ((λ (b)
-                                          (ifne B
-                                                ((λ (c)
-                                                   tem)
-                                                 (car (cdr (cdr (cdr (cdr e))))))
-                                                (car (cdr (cdr (cdr e))))))
-                                        (car (cdr (cdr e)))))
-                                     (car (cdr e)))
-                                    (car e)))))
+    ; here A and B (but not a, b, c) are constructor names:
+    (check-equal? (compiler '((A a b B c) tem))
+                  '(λ (e) (ifls e
+                                (ifne A
+                                      ((λ (a)
+                                         ((λ (b)
+                                            (ifne B
+                                                  ((λ (c)
+                                                     tem)
+                                                   (car (cdr (cdr (cdr (cdr e))))))
+                                                  (car (cdr (cdr (cdr e))))))
+                                          (car (cdr (cdr e)))))
+                                       (car (cdr e)))
+                                      (car e)))))
 
-  ; more sensible format:
-  (check-equal? (compiler '((A a b B c) tem))
-                '(λ (e) (ifls e
-                              (ifne A (car e)
-                                    (let a (car (cdr e))
-                                      (let b (car (cdr (cdr e)))
-                                        (ifne B (car (cdr (cdr (cdr e))))
-                                              (let c (car (cdr (cdr (cdr (cdr e)))))
-                                                tem))))))))
-  )
+    ; more sensible format:
+    (check-equal? (compiler '((A a b B c) tem))
+                  '(λ (e) (ifls e
+                                (ifne A (car e)
+                                      (let a (car (cdr e))
+                                        (let b (car (cdr (cdr e)))
+                                          (ifne B (car (cdr (cdr (cdr e))))
+                                                (let c (car (cdr (cdr (cdr (cdr e)))))
+                                                  tem))))))))
+    )
 
 
 

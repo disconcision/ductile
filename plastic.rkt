@@ -68,6 +68,24 @@ This could be added as a seperate layer
     [_ stx]))
 
 
+(define (rewrite-haskdefs stx)
+  (foldl
+   (λ (c acc)
+     (match* (c acc)
+       [(`(,fn-name ,params ... → ,body)
+         '())
+        `((define ,fn-name (λ (,@params → ,body))))]
+       [(`(,fn-name ,params ... → ,body)
+         `(,xs ... (define ,last-fn-name (λ ,ys ...))))
+        (if (equal? fn-name last-fn-name)
+            `(,@xs (define ,last-fn-name (λ ,@ys (,@params → ,body))))
+            `(,@xs (define ,last-fn-name (λ ,@ys))
+                   (define ,fn-name (λ (,@params → ,body)))))]
+       [(expr res) `(,@res ,expr)]))
+   '()
+   stx))
+
+
 (define (extract-data stx types)
   (match stx
     [`(define-data ,type ,cs ...)
@@ -87,7 +105,6 @@ This could be added as a seperate layer
   #;(println prog)
   (match prog
     [(? constructor-id? id) id]
-    
     ; added not clause to make following case less order-dependent
     [`(,(? constructor-id? id) ,(and xs (not (== '→))) ...)
      `(,id ,@(map I xs))]
@@ -110,8 +127,8 @@ This could be added as a seperate layer
     ; of arguments the same as it does constructors
     [`(,(app I `(c: ,c-env ,body ,pats ...)) ,(app I args) ...)
      (match (pattern-match types c-env args pats)
-           ['no-match 'no-match]
-           [new-env (interpret types new-env body)])]))
+       ['no-match 'no-match]
+       [new-env (interpret types new-env body)])]))
 
 
 (define (pattern-match types c-env arg pat) ; returns env
@@ -129,11 +146,11 @@ This could be added as a seperate layer
      (hash-set c-env id arg)]
     ; constructor case:
     [(? list?)
-       (foldl (λ (arg pat env)
-                (pattern-match types env arg pat))
-              c-env
-              arg
-              pat)]))
+     (foldl (λ (arg pat env)
+              (pattern-match types env arg pat))
+            c-env
+            arg
+            pat)]))
 
 
 (module+ test
@@ -306,6 +323,19 @@ This could be added as a seperate layer
                0)
 
 
+  (test-equal? "haskdefs 1"
+               (rewrite-haskdefs '((and a true → true)
+                                   (and a b → (cons b a))
+                                   (id a → a)
+                                   true))
+               '((define and
+                   (λ #;(Bool Bool → Bool)
+                     (a true → true)
+                     (a b → (cons b a))))
+                 (define id
+                   (λ #;(Bool → Bool)
+                     (a → a)))
+                 true))
 
 
   )

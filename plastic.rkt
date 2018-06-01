@@ -141,27 +141,26 @@ This could be added as a seperate layer
        [new-env (interpret types new-env body)])]))
 
 
-#| matches arg to pat and returns a hash of bound variables |#
+#| matches arg to pat and returns a hash of bound variables.
+   probably should specify that pattern-matching shouldn't be
+   used in this implementation, but actually using pattern
+   matching doesn't really let you gloss over any of the logic.|#
 (define (pattern-match types c-env arg pat)
-  (define Pm (curry pattern-match types c-env))
-  (define (constructor-id? id)
-    (hash-has-key? types id))
-  (match pat
-    ; nullary datum case:
-    [(? constructor-id? d)
-     (match arg
-       [(== d) c-env]
-       [_ 'no-match])]
-    ; var case:
-    [(? symbol? id)
-     (hash-set c-env id arg)]
-    ; constructor case:
-    [(? list?)
-     (foldl (λ (arg pat env)
-              (pattern-match types env arg pat))
-            c-env
-            arg
-            pat)]))
+  (define constructor-id?
+    (curry hash-has-key? types))
+  (cond [(and (constructor-id? pat)
+              (equal? arg pat))
+         c-env]
+        [(and (not (constructor-id? pat))
+              (symbol? pat))
+         (hash-set c-env pat arg)]
+        [(list? pat)
+         (foldl (λ (arg pat env)
+                  (pattern-match types env arg pat))
+                c-env
+                arg
+                pat)]
+        [else 'no-match]))
 
 
 (module+ test

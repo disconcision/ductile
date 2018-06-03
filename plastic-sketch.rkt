@@ -100,6 +100,34 @@ this will allow us to usefully decompose M
   (not (U M row)))
 
 
+
+
+
+#| hints for exhaustiveness checking:
+
+
+0. consider lists of patterns expressed in matrix form
+
+1. notice that pattern variable names don't matter;
+they can all be replaced by a generic wildcard
+
+2. notice that changing pattern order doesn't affect exhaustiveness
+
+3. consider the match matrix one column at a time.
+
+4. following on 2, for each constructor, we can form a specialized
+version of the original matrix where we eliminate any rows whose
+first column begins with any other constructor. now all of these
+specialized matrixes have to be exhaustive
+
+5. notice that since each entry in the first col of these
+specialized matrices has the same constructor, we can
+just eliminate that constructor, and add its arguments
+as columns in the specialized matrix.
+
+|#
+
+
 ; concrete pattern-matching clause for manual cons pattern:
 ; (excerpted from plastic/pattern-match)
 #;[`(cons ,p0 ,p1)

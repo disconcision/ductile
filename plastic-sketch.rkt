@@ -3,131 +3,6 @@
 (require racket/hash)
 
 
-; exhaustiveness following Maranget (Warnings for pattern matching)
-
-; grammar
-#; (pattern ((cons pattern pattern)
-             (just pattern)
-             void
-             null))
-
-#| simplifying assumptions:
-   1. all patterns are linear, so we can reduce named
-   pattern variables to a generic wildcard
-
-
-|#
-
-(define Msample '(( (cons null _)  (cons (cons _ _) _)    )
-                  ( (just null)    (cons _ (cons null _)) )
-                  ( (cons _ _)     (cons null (cons _ _)) )
-                  (  null           _                     )
-                  (  void           _                     )))
-
-(define constants '(cons just null void))
-(define transpose (curry apply map list))
-(define (row M) (curry list-ref M))
-(define (col M) (curry list-ref (transpose M)))
-(define cnst? (curryr member constants))
-(define/match (instance? pattern value)
-  [(  '_        _        ) #true]
-  [( (? cnst?) (? cnst?) ) (equal? pattern value)]
-  [( (? list?) (? list?) ) (and (equal? (length pattern) (length value))
-                                (andmap instance? pattern value))]
-  [(  _         _        ) #false])
-(define (M-instance? M v) (ormap (curryr instance? v) M))
-(define Msample-transpose (transpose Msample))
-(define (dimensions M)
-  `(,(length M) ,(length (first M))))
-
-#| let M be a match matrix and q a vector of values whose
-   length is the same as the number of columns of M.
-
-we want U* to satisty:
-   ∃v (and (not (M-instance? M v)) (instance? q v)))
-
-we attempt to implement U* as U
-
-note important invariant:
-U is invariant under reordering of rows
-this will allow us to usefully decompose M
-  without worrying about interaction
-
- |#
-(define (U M q)
-  (match* (M q)
-    [(`()  _) #true] ; empty matrix
-    [(`(() ...) `()) #false] ; matrix of empty rows
-    [(`((,x ,xs...) ...) `(,q1 ,qs ...))
-     (match q1
-       [`(,(? cnst? c) ,rs ...)
-        (U (S c M) (S c q))]
-       [`_
-        (if (complete-signature? (signature-in x))
-            ; actually maybe note that first col of M is x
-            (ormap (λ (c) (U (S c M) (S c q)))
-                   (signature-in x))
-            #t)] ; count signature. for exhaustiveness, skip incomp case
-       )]
-    ))
-
-(define complete-signature? 0)
-(define (signature-in col)
-  (foldl (λ (x acc)
-           (match x
-             ))
-         (set)
-         col))
-
-(define (S c M)
-  (apply map append
-         (match-lambda
-           [`(_ ,ps ...) ; note this is '_ 
-            `((,@(make-list '_ (length (transpose M))) ,@ps))]
-           ; note we might need to readjust below a bit
-           ; because is assumes nullary cntrs are written like (c)
-           [`((,(== c) ,rs ...) ,ps ...)
-            `((,@rs ,@ps))]
-           [`((,(and (? cnst?) (not (== c))) ,rs ...) ,ps ...)
-            `()])))
-
-#|
-  U lets us define the following:
-|#
-(define (exhaustive? M)
-  (not (U M (make-list '_ (length (transpose M))))))
-(define (redundant? M row) ; remove row from M first
-  (not (U M row)))
-
-
-
-
-
-#| hints for exhaustiveness checking:
-
-
-0. consider lists of patterns expressed in matrix form
-
-1. notice that pattern variable names don't matter;
-they can all be replaced by a generic wildcard
-
-2. notice that changing pattern order doesn't affect exhaustiveness
-
-3. consider the match matrix one column at a time.
-
-4. following on 2, for each constructor, we can form a specialized
-version of the original matrix where we eliminate any rows whose
-first column begins with any other constructor. now all of these
-specialized matrixes have to be exhaustive
-
-5. notice that since each entry in the first col of these
-specialized matrices has the same constructor, we can
-just eliminate that constructor, and add its arguments
-as columns in the specialized matrix.
-
-|#
-
-
 ; concrete pattern-matching clause for manual cons pattern:
 ; (excerpted from plastic/pattern-match)
 #;[`(cons ,p0 ,p1)
@@ -140,41 +15,6 @@ as columns in the specialized matrix.
         [(e0 e1) (hash-union e0 e1)])]
      [_ 'no-match])]
 
-#|
-
-Current design factors out all static checking.
-Static checking possibilities:
-1. type-checking with explicit declarations:
-decorate all λ-forms (and eliminate λ-less arrows) with a type-dec
-constructor checking (including constructor arity) should be able to
-piggy-back on this checking (do we even need to distinguish fns/constructors?)
-2. exhaustiveness checking:
-simpler if we have type decs... otherwise we need more logic to determine
-which type we're trying to exhaust. for only nullary constructors: begin
-with a set of all instances of the type; remove as they are seen, or
-until a wildcard is found. if we reach the end of the list and the set
-is non-empty, then it's not exhaustive.
-for n-ary constructors:
-idea 1: recursively fill initial set.
-i.e. for n-ary constructors, add all variants to se
-problem: recursive types (seems fatal)
-the below is exhaustive:
-[zero ?]
-[(S zero) ?]
-[(S (S zero)) ?]
-[(S a) ?]
-if type is recusive, seems like we'd eventually need a wildcard
-non-exhaustive case: (no case for (S (S zero)))
-[zero ?]
-[(S zero) ?]
-[(S (S (S a))) ?]
-
-maybe restrict exhaustiveness check to non-recursive,
-non-mututally-recursive types
-
-exhaustiveness refs: TODO
-
-|#
 
 ; pattern matching to lc-ish compilation tests
 (define (compiler pat-tem)
@@ -187,10 +27,7 @@ exhaustiveness refs: TODO
            [(? symbol?)
             0]
            [`(,(? 'XXX-constructor-id?) ,xs ...)
-            0]))])
-  )
-(define types #hash((null . List)
-                    (just . (Bool → Maybe-Bool))))
+            0]))]))
 
 
 ; below needs to be non-strict in stx
@@ -204,7 +41,6 @@ exhaustiveness refs: TODO
       (if (list? e)
           stx
           'no-match)))
-
 
 #;(module+ test
     (require rackunit)

@@ -185,3 +185,25 @@
      `(p-dat ,id ,@(map Px xs) )]
     #;[`(cons ,a ,b) `(cons ,(Px a) ,(Px b))]
     #;[_ stx]))
+
+
+
+; if only we had recursive fns:
+#; '((data Nat
+           zero
+           (S Nat))
+     (data Maybe-Nat
+           nothing
+           (just Nat))
+     ; idea: pred xcept with maybe to handle 0
+     (define pred
+       (λ (Nat → Maybe-Nat)
+         ((S a) → (just a))
+         (zero → nothing)))
+     #;(define add
+         (λ (Nat → (Nat → Nat))
+           (a → (λ (Nat → Nat) ; or make nested fns not require type ann?
+                  (zero → a) 
+                  ((S b) → (S ((add a) b))))))) ; xcept no recursion...
+     ; re above: maybe need explicit fun to differentiate from application
+     (add (S zero) (S (S zero))))

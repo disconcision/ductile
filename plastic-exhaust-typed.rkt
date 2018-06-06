@@ -13,11 +13,11 @@
         [_ ls])))
 
   (define set-of-types
-    (for/fold ([ts (set)])
+    (for/fold ([the-set (set)])
               ([(k v) types])
       (match v
-        [(or `(,_ ... → ,x) x) (set-add ts x)]
-        [_ ts])))
+        [(or `(,_ ... → ,x) x) (set-add the-set x)]
+        [_ the-set])))
   
   (define constructor? (curry hash-has-key? types))
   (define type? (curry set-member? set-of-types))
@@ -89,9 +89,27 @@
                               ((pair Bool (true)))))
               #t)
 
+
 (define types2 #hash((true . Bool)
                      (false . Bool)
                      (cons . (Bool List → List))
                      (null . List)))
 
+(check-equal? (NE* types2 '(((cons Bool Bool))
+                            ((null))))
+              #f)
+
+(check-equal? (NE* types2 '(((cons Bool (false)))
+                            ((null))))
+              #t)
+
+(check-equal? (NE* types2 '(((cons (true) Bool))
+                            ((cons Bool (true)))
+                            (List)))
+              #f)
+
+(check-equal? (NE* types2 '(((cons (true) Bool))
+                            ((cons Bool (true)))
+                            ((null))))
+              #t)
 

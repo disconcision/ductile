@@ -20,61 +20,143 @@
 
    2. we will omit or-patterns, and indeed everything
    but wildcards, literals, and lists thereof
-
-
 |#
 
 
 ; exhaustiveness:
+
+; fixed type for now:
 (define types #hash((true . Bool)
-                    (false . Bool)))
-(define cnst? (curryr hash-has-key? types))
-(define (num-args cnst)
-  (match (hash-ref types cnst)
+                    (false . Bool)
+                    (pair . (Bool Bool → Bool))))
+
+; utility fns:
+
+(define constructor? (curry hash-has-key? types))
+(define complete-signature (hash-keys types))
+
+(define (num-args constructor)
+  (match (hash-ref types constructor)
     [(? list? ls) (- (length ls) 2)]
     [_ 0]))
-(define complete-signature '(true false))
-(define (complete? sig)
-  (set=? sig (list->set complete-signature)))
-(define (signature-in col)
+
+(define (complete? signature)
+  (set=? signature (list->set complete-signature)))
+
+(define (signature-in column)
   (for/fold ([old-set (set)])
-            ([pat col])
-    (match pat
-      [`(,cnst ,cnsts ...) (set-add old-set cnst)])))
-(define (signature-in-alt col)
-  (foldl (λ (pat old-set)
-           (match pat
-             [`(,cnst ,cnsts ...) (set-add old-set cnst)]
-             [_ old-set]))
-         (set)
-         col))
+            ([pattern column])
+    (match pattern
+      [`(,constructor ,_ ...) (set-add old-set constructor)]
+      [_ old-set])))
+
+; generates the 'Default Matrix' D from a matrix M
 (define (D M)
-  (apply map append
-         (match-lambda
-           [`((,(? cnst?) ,rs ...) ,ps ...)
-            `()]
-           [`(_ ,ps ...)
-            ps])))
+  (apply append 
+         (for/list ([row M])
+           (match row
+             [`((,(? constructor?) ,rs ...) ,ps ...)
+              `()]
+             [`(_ ,ps ...)
+              `(,ps)]))))
+
+; generates the 'Specialized Matrix' S from a matrix M
 (define (S c M)
-  (apply map append
-         (match-lambda
-           [`(_ ,ps ...) ; note this is '_ 
-            `((,@(make-list '_ (num-args c)) ,@ps))]
-           [`((,(== c) ,rs ...) ,ps ...)
-            `((,@rs ,@ps))]
-           [`((,(and (? cnst?) (not (== c))) ,rs ...) ,ps ...)
-            `()])))
+  (apply append
+         (for/list ([row M]) 
+           (match row
+             [`(_ ,ps ...) ; note this is literal '_ 
+              `((,@(make-list (num-args c) '_) ,@ps))]
+             [`((,(== c) ,rs ...) ,ps ...)
+              `((,@rs ,@ps))]
+             [`((,(not (== c)) ,_ ...) ,_ ...)
+              `()]))))
+
+; returns true iff M is non-exhaustive
 (define (NE M)
   (match M
     [`() #true]
     [`(() ..1) #false]
-    [(app transpose `(,first-col ,rest-cols ...))
+    [(app transpose `(,first-col ,_ ...))
      (if (complete? (signature-in first-col))
-         (ormap (map (λ (c) (NE (S c M))) complete-signature))
+         (for/or ([constructor complete-signature])
+           (NE (S constructor M)))
          (NE (D M)))]))
 
 
 ; tests for exhaustiveness:
+(require rackunit)
+
+
+(check-equal? (NE '((_)))
+              #f)
+
+(check-equal? (NE '((_ _)))
+              #f)
+
+(define M1 '(( (true)     )
+             ( (pair _ _) )))
+
+(check-equal? (D M1) '())
+(check-equal? (S 'true M1) '(()))
+(check-equal? (S 'pair M1) '((_ _)))
+(check-equal? (S 'false M1) '())
+(check-equal? (NE M1) #t)
+
+(define M2 '(( (true)          )
+             ( (pair (true) _) )
+             ( (pair _ (true)) )
+             (  _              )))
+
+(check-equal? (D M2) '(()))
+(check-equal? (S 'true M2) '(() ())) ; DOUBLE CHECK THIS
+(check-equal? (S 'pair M2) '(((true) _)
+                             (_ (true))
+                             (_ _)))
+(check-equal? (S 'false M2) '(())) ; THIS TOO
+(check-equal? (NE M2) #f)
+
+(define M3 '(( (true)          )
+             ( (false)         )
+             ( (pair _ _)      )))
+
+(check-equal? (S 'true M3) '(()))
+(check-equal? (S 'pair M3) '((_ _)))
+(check-equal? (S 'false M3) '(()))
+(check-equal? (NE M3) #f)
+
+
+(check-equal? (NE '((_)))
+              #f)
+
+(check-equal? (NE '(((true)
+                     (_))))
+              #t)
+
+(check-equal? (NE '(((true))))
+              #t)
+
+(check-equal? (NE '(((true))
+                    ((false))))
+              #t)
+
+(check-equal? (NE '(((true))
+                    ((false))
+                    ((pair (true) _))))
+              #t)
+
+(check-equal? (NE '(((true))
+                    ((false))
+                    ((pair (true) _))
+                    ((pair _ (true)))))
+              #t)
+
+(check-equal? (NE '(((true))
+                    ((false))
+                    ((pair (true) _))
+                    ((pair _ (true)))
+                    (_)))
+              #f)
 
 ; grammar
 #; (pattern ((cons pattern pattern)
@@ -97,7 +179,7 @@
 
 (define/match (instance? pattern value)
   [(  '_        _        ) #true]
-  [( (? cnst?) (? cnst?) ) (equal? pattern value)]
+  [( (? constructor?) (? constructor?) ) (equal? pattern value)]
   [( (? list?) (? list?) ) (and (equal? (length pattern) (length value))
                                 (andmap instance? pattern value))]
   [(  _         _        ) #false])
@@ -126,7 +208,7 @@ this will allow us to usefully decompose M
     [(`(() ...) `()) #false] ; matrix of empty rows
     [(`((,x ,xs...) ...) `(,q1 ,qs ...))
      (match q1
-       [`(,(? cnst? c) ,rs ...)
+       [`(,(? constructor? c) ,rs ...)
         (U (S c M) (S c q))]
        [`_
         (if (complete? (signature-in x))

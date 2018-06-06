@@ -3,7 +3,7 @@
 (define transpose (curry apply map list))
 
 (define (NE* types M)
-  (define constructor? (curry hash-has-key? types))
+
   (define (complete-signature type)
     (for/fold ([ls '()])
               ([(k v) types])
@@ -12,11 +12,16 @@
          (cons k ls)]
         [_ ls])))
 
-  (define (num-args constructor)
-    (match (hash-ref types constructor)
-      [(? list? ls) (- (length ls) 2)]
-      [_ 0]))
-
+  (define set-of-types
+    (for/fold ([ts (set)])
+              ([(k v) types])
+      (match v
+        [(or `(,_ ... → ,x) x) (set-add ts x)]
+        [_ ts])))
+  
+  (define constructor? (curry hash-has-key? types))
+  (define type? (curry set-member? set-of-types))
+  
   (define (make-signature constructor)
     (match (hash-ref types constructor)
       [`(,sig ... → ,_) sig]
@@ -38,14 +43,14 @@
              (match row
                [`((,(? constructor?) ,rs ...) ,ps ...)
                 `()]
-               [`(_ ,ps ...)
+               [`(,(? type?) ,ps ...)
                 `(,ps)]))))
   
   (define (S c M)
     (apply append
            (for/list ([row M]) 
              (match row
-               [`(_ ,ps ...) ; note this is literal '_ 
+               [`(,(? type?) ,ps ...) ; note this is literal '_ 
                 `((,@(make-signature c) ,@ps))]
                [`((,(== c) ,rs ...) ,ps ...)
                 `((,@rs ,@ps))]
@@ -55,7 +60,38 @@
     [`() #true]
     [`(() ..1) #false]
     [(app transpose `(,first-col ,_ ...))
+     (define type (match (first first-col)
+                    [(? type? t) t]
+                    [`(,(? constructor? c) ,_ ...)
+                     (match (hash-ref types c)
+                       [(or `(,_ ... → ,x) x) x]
+                       )]))
      (if (complete? type (signature-in first-col))
          (for/or ([constructor (complete-signature type)])
-           (NE* (S constructor M)))
-         (NE* (D M)))]))
+           (NE* types (S constructor M)))
+         (NE* types (D M)))]))
+
+
+(define ext-bool #hash((true . Bool)
+                       (false . Bool)
+                       (pair . (Bool Bool → Bool))))
+(require rackunit)
+(check-equal? (NE* ext-bool '(((true))
+                              ((false))
+                              ((pair (true) Bool))
+                              ((pair Bool (true)))
+                              (Bool)))
+              #f)
+
+(check-equal? (NE* ext-bool '(((true))
+                              ((false))
+                              ((pair (true) Bool))
+                              ((pair Bool (true)))))
+              #t)
+
+(define types2 #hash((true . Bool)
+                     (false . Bool)
+                     (cons . (Bool List → List))
+                     (null . List)))
+
+

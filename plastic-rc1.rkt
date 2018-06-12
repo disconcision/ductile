@@ -48,43 +48,16 @@ This could be added as a seperate layer
 
 (define (run prog)
   (define types (foldl extract-data #hash() prog))
-  ((compose (curry interpret types #hash())
-            expand-top
-            (curry static-check types)
-            #;rewrite-haskdefs)
-   prog))
+  (static-check types prog) ; make sure the data-defines dont screw this up
+  (define env-defs (foldl (run-defs types) #hash() prog))
+  (interpret types env-defs (last prog)))
 
-(define (expand-top stx)
-  (define Ex expand-top)
+(define ((run-defs types) stx env)
   (match stx
-    ; eliminate data form (which was already extracted)
-    [`((data ,xs ...) ,ys ...)
-     (Ex ys)]
-    ; rewrite defines into lambdas
-    [`((define ,id ,init) ,expr)
-     `((,id → ,(Ex expr)) ,(Ex init))]
-    [`((define ,id ,init) ,xs ...)
-     `((,id → ,(Ex xs)) ,(Ex init))]
-    [_ stx]))
-
-
-#| this rewrites a sequence of haskell-style inline function
-   defs with an expr on the end into a sequence of defines.
-   these are now delimited by type signatures so the logic
-   is simpler for starting a new definition. |#
-#;(define (rewrite-haskdefs stx)
-  (foldl
-   (λ (c acc)
-     (match* (c acc)
-       [(`(,fn-name :: ,type ...)
-         xs)
-        `(,@xs (define ,fn-name (λ ,type)))]
-       [(`(,fn-name ,params ... = ,body)
-         `(,xs ... (define ,prev-fn-name (λ ,ys ...))))
-        `(,@xs (define ,prev-fn-name (λ ,@ys (,@params → ,body))))]
-       [(expr res) `(,@res ,expr)]))
-   '()
-   stx))
+    [`(data ,_ ...) env]
+    [`(define ,id ,init)
+     (hash-set env id (interpret types env init))]
+    [_ env]))
 
 
 #| returns a hash containing the type data extracted
@@ -160,36 +133,36 @@ This could be added as a seperate layer
 (module+ test
   (require rackunit)
 
-  (test-equal? "define"
-               (expand-top '((data Void void)
-                             (define x void)
-                             x))
-               '((x → x) void))
+  #;(test-equal? "define"
+                 (expand-top '((data Void void)
+                               (define x void)
+                               x))
+                 '((x → x) void))
   
-  (test-equal? "two defines"
-               (expand-top '((data Bool
-                                   true
-                                   false)
-                             (define x true)
-                             (define y false)
-                             y))
-               '((x → ((y → y) false)) true))
+  #;(test-equal? "two defines"
+                 (expand-top '((data Bool
+                                     true
+                                     false)
+                               (define x true)
+                               (define y false)
+                               y))
+                 '((x → ((y → y) false)) true))
   
-  (test-equal? "two defines 2"
-               (expand-top '((data Bool
-                                   true
-                                   false)
-                             (define x true)
-                             (define y false)
-                             x))
-               '((x → ((y → x) false)) true))
+  #;(test-equal? "two defines 2"
+                 (expand-top '((data Bool
+                                     true
+                                     false)
+                               (define x true)
+                               (define y false)
+                               x))
+                 '((x → ((y → x) false)) true))
   
-  (test-equal? "two defines scope"
-               (expand-top '((data Void void)
-                             (define x void)
-                             (define y x)
-                             y))
-               '((x → ((y → y) x)) void))
+  #;(test-equal? "two defines scope"
+                 (expand-top '((data Void void)
+                               (define x void)
+                               (define y x)
+                               y))
+                 '((x → ((y → y) x)) void))
 
   (test-equal? "only literal"
                (run '((data Bool
@@ -306,20 +279,20 @@ This could be added as a seperate layer
 
 
   #;(test-equal? "haskdefs"
-               (rewrite-haskdefs '((and :: Bool Bool → Bool)
-                                   (and a true = true)
-                                   (and a b = (cons b a))
-                                   (id :: Bool → Bool)
-                                   (id a = a)
-                                   true))
-               '((define and
-                   (λ (Bool Bool → Bool)
-                     (a true → true)
-                     (a b → (cons b a))))
-                 (define id
-                   (λ (Bool → Bool)
-                     (a → a)))
-                 true))
+                 (rewrite-haskdefs '((and :: Bool Bool → Bool)
+                                     (and a true = true)
+                                     (and a b = (cons b a))
+                                     (id :: Bool → Bool)
+                                     (id a = a)
+                                     true))
+                 '((define and
+                     (λ (Bool Bool → Bool)
+                       (a true → true)
+                       (a b → (cons b a))))
+                   (define id
+                     (λ (Bool → Bool)
+                       (a → a)))
+                   true))
 
   (define haskell-style-test
     '((data Bool
@@ -343,47 +316,47 @@ This could be added as a seperate layer
            (or false false))))
   
   #;(check-equal? (rewrite-haskdefs haskell-style-test)
-                '((data Bool
-                        true
-                        false)
-                  (data ListBool
-                        null
-                        (cons Bool List))
-                  (define and
-                    (λ (Bool Bool → Bool)
-                      (true true → true)
-                      (a b → false)))
-                  (define or
-                    (λ (Bool Bool → Bool)
-                      (true a → true)
-                      (a true → true)
-                      (a b → false)))
-                  (and (or true false) (or false false))))
+                  '((data Bool
+                          true
+                          false)
+                    (data ListBool
+                          null
+                          (cons Bool List))
+                    (define and
+                      (λ (Bool Bool → Bool)
+                        (true true → true)
+                        (a b → false)))
+                    (define or
+                      (λ (Bool Bool → Bool)
+                        (true a → true)
+                        (a true → true)
+                        (a b → false)))
+                    (and (or true false) (or false false))))
 
   #;(check-equal? (run haskell-style-test)
-                'false)
+                  'false)
 
   #;(test-exn "non-exhaustive"
-            (regexp (regexp-quote
-                     "error: not exhaustive:  (Bool Bool) ((true a) (a true))"))
-            (thunk (run '((data Bool
-                                true
-                                false)
+              (regexp (regexp-quote
+                       "error: not exhaustive:  (Bool Bool) ((true a) (a true))"))
+              (thunk (run '((data Bool
+                                  true
+                                  false)
   
-                          (data ListBool
-                                null
-                                (cons Bool List))
+                            (data ListBool
+                                  null
+                                  (cons Bool List))
   
-                          (and :: Bool Bool → Bool)
-                          (and true true = true)
-                          (and a b = false)
+                            (and :: Bool Bool → Bool)
+                            (and true true = true)
+                            (and a b = false)
 
-                          (or :: Bool Bool → Bool)
-                          (or true a = true)
-                          (or a true = true)
+                            (or :: Bool Bool → Bool)
+                            (or true a = true)
+                            (or a true = true)
   
-                          (and (or true false)
-                               (or false false))))))
+                            (and (or true false)
+                                 (or false false))))))
 
 
   )

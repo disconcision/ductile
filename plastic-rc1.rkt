@@ -1,7 +1,8 @@
 #lang racket #| CSC324 SUMMER A1 PROPOSAL |#
 
 (require racket/hash)
-(require "plastic-exhaust-typed.rkt")
+(provide run)
+
 #| plastic!
 
 Plastic is the lambda calculus with pattern-matching and ADTs.
@@ -16,6 +17,9 @@ with only a single n-ary constructor is essentially a struct.
 |#
 
 #; (grammar:
+    (TERMINALS (type-id ; these all form seperate namespaces
+                cons-id
+                id))
     (prog ((data type-id
                  constructor-dec
                  ...)
@@ -23,20 +27,20 @@ with only a single n-ary constructor is essentially a struct.
            (define id expr-or-lambda)
            ...
            expr))
-    (expr (0-ary-cons-id
-           (n-ary-cons-id expr ...)
-           id
-           (expr expr)))
+    (expr (id
+           cons-id
+           (cons-id expr ...)
+           (id expr ...)))
     (lambda ((λ type
                (pattern → expr)
                ...)))
     (expr-or-lambda (expr
                      lambda))
-    (pattern (0-ary-cons-id
-              (n-ary-cons-id pattern ...)
+    (pattern (cons-id
+              (cons-id pattern ...)
               id))
-    (constructor-dec (0-ary-cons-id
-                      (n-ary-cons-id type-id ...))))
+    (constructor-dec (cons-id
+                      (cons-id type-id ...))))
 
 #|
 
@@ -47,8 +51,8 @@ This could be added as a seperate layer
 |#
 
 (define (run prog)
-  (define types (foldl extract-data #hash() prog))
-  (static-check types prog) ; make sure the data-defines dont screw this up
+  (define types (foldl collate-data #hash() prog))
+  (static-check types prog)
   (define env-defs (foldl (run-defs types) #hash() prog))
   (interpret types env-defs (last prog)))
 
@@ -62,26 +66,25 @@ This could be added as a seperate layer
 
 #| returns a hash containing the type data extracted
    from the data forms |#
-(define (extract-data stx types)
+(define (collate-data stx types)
   (match stx
     [`(data ,type ,cs ...)
-     (foldl (λ (c env)
-              (match c
-                [`(,x ,xs ...) (hash-set env x `(,@xs → ,type))]
-                ; gADT-style fn type sigs for non-nullary constructors
-                [_ (hash-set env c `(→ ,type))]))
-            types cs)]
+     (for/fold ([env types])
+               ([c cs])
+       (match c
+         [`(,x ,xs ...) (hash-set env x `(,@xs → ,type))]
+         [_ (hash-set env c `(→ ,type))]))]
     [_ types]))
 
+(define ((constructor-id? types) id)
+  (hash-has-key? types id))
 
 (define (interpret types env prog)
-  (define (constructor-id? id)
-    (hash-has-key? types id))
   (define I (curry interpret types env))
   (match prog
-    [(? constructor-id? id) id]
+    [(? (constructor-id? types) id) id]
     ; added not clause to make following case less order-dependent
-    [`(,(? constructor-id? id) ,(and xs (not (== '→))) ...)
+    [`(,(? (constructor-id? types) id) ,(and xs (not (== '→))) ...)
      `(,id ,@(map I xs))]
     [(? symbol? id) (hash-ref env id)]
     
@@ -91,12 +94,11 @@ This could be added as a seperate layer
 
     ; fallthrough case
     [`(,(app I `(c-fall: ,c-env ,cases ...)) ,(app I a-vals) ...)
-     (foldl (λ (a-case acc)
-              (match acc
-                ['no-match (interpret types c-env `(,a-case ,@a-vals))]
-                [result result]))
-            'no-match
-            cases)]
+     (for/fold ([acc 'no-match])
+               ([a-case cases])
+       (match acc
+         ['no-match (interpret types c-env `(,a-case ,@a-vals))]
+         [result result]))]
 
     ; application: notice how pattern-match handles lists
     ; of arguments the same as it does constructors
@@ -111,252 +113,109 @@ This could be added as a seperate layer
    used in this implementation, but actually using pattern
    matching doesn't really let you gloss over any of the logic.|#
 (define (pattern-match types c-env arg pat)
-  (define constructor-id?
-    (curry hash-has-key? types))
-  (cond [(and (constructor-id? pat)
+  (cond [(and ((constructor-id? types) pat)
               (equal? arg pat))
          c-env]
-        [(and (not (constructor-id? pat))
+        [(and (not ((constructor-id? types) pat))
               (symbol? pat))
          (hash-set c-env pat arg)]
         [(list? pat)
-         (foldl (λ (arg pat env)
-                  (if (equal? env 'no-match)
-                      'no-match
-                      (pattern-match types env arg pat)))
-                c-env
-                arg
-                pat)]
+         (for/fold ([env c-env])
+                   ([a arg]
+                    [p pat])
+           (if (equal? env 'no-match)
+               'no-match
+               (pattern-match types env a p)))]
         [else 'no-match]))
 
 
-(module+ test
-  (require rackunit)
+(define (static-check types stx)
+  (match stx
+    [`(λ (,typevec ... → ,_)
+        (,ts ... → ,_) ...)
+     (if ((compose (curry NE* types typevec)
+                   (wrap-nullary-constructors types))
+          ts)
+         (error "non-exhaustive")
+         stx)]
+    [(? list?) (map (curry static-check types) stx)]
+    [_ stx]))
 
-  #;(test-equal? "define"
-                 (expand-top '((data Void void)
-                               (define x void)
-                               x))
-                 '((x → x) void))
+
+(define transpose (curry apply map list))
+
+(define (wrap-nullary-constructors types)
+  (match-lambda
+    [(? list? stx) (map (wrap-nullary-constructors types) stx)]
+    [(? (constructor-id? types) c)
+     #:when (= 2 (length (hash-ref types c)))
+     `(,c)]
+    [stx stx]))
+
+
+(define (NE* types typevec M)
+
+  (define (wildcard? stx)
+    (conjoin symbol?
+             (disjoin (curry equal? '_)
+                      (negate (constructor-id? types)))))
   
-  #;(test-equal? "two defines"
-                 (expand-top '((data Bool
-                                     true
-                                     false)
-                               (define x true)
-                               (define y false)
-                               y))
-                 '((x → ((y → y) false)) true))
+  (define (input-signature constructor)
+    (match (hash-ref types constructor)
+      [`(,sig ... → ,_) sig]))
+
+  (define (all-constructors type)
+    (for/fold ([ls '()])
+              ([(k v) types])
+      (match v
+        [`(,_ ... → ,(== type))
+         (cons k ls)]
+        [_ ls])))
+
+  (define (complete? type signature)
+    (set=? signature (list->set (all-constructors type))))
   
-  #;(test-equal? "two defines 2"
-                 (expand-top '((data Bool
-                                     true
-                                     false)
-                               (define x true)
-                               (define y false)
-                               x))
-                 '((x → ((y → x) false)) true))
+  (define (signature-in column)
+    (for/fold ([old-set (set)])
+              ([pattern column])
+      (match pattern
+        [`(,constructor ,_ ...)
+         (set-add old-set constructor)]
+        [_ old-set])))
   
-  #;(test-equal? "two defines scope"
-                 (expand-top '((data Void void)
-                               (define x void)
-                               (define y x)
-                               y))
-                 '((x → ((y → y) x)) void))
-
-  (test-equal? "only literal"
-               (run '((data Bool
-                            true
-                            false)
-                      (define q true)
-                      false))
-               'false)
-
-  (test-equal? "simple closure"
-               (run '((data Bool
-                            true
-                            false)
-                      (define q true)
-                      ((x → x) true)))
-               'true)
-
-  (test-equal? "cons with var"
-               (run '((data Bool
-                            true
-                            false)
-                      (data List
-                            null
-                            (cons Bool List))
-                      (define a true)
-                      (cons true a)))
-               '(cons true true))
+  (define (D M)
+    (apply
+     append 
+     (for/list ([row M])
+       (match row
+         [`((,(? (constructor-id? types)) ,_ ...) ,_ ...)
+          `()]
+         [`(,(? wildcard?) ,xs ...)
+          `(,xs)]))))
   
-  (test-equal? "cons identity"
-               (run '((data Bool
-                            true
-                            false)
-                      (data List
-                            null
-                            (cons Bool List))
-                      (define identity
-                        (λ (List → List)
-                          (null → null)
-                          ((cons a b) → (cons a b))))
-                      (identity (cons true true))))
-               '(cons true true))
-
-  (test-equal? "cons flip"
-               (run '((data Bool
-                            true
-                            false)
-                      (data List
-                            null
-                            (cons Bool List))
-                      (define flip
-                        (λ (List → List)
-                          (null → null)
-                          ((cons a b) → (cons b a))))
-                      (flip (cons true null))))
-               '(cons null true))
+  (define (S c M)
+    (apply
+     append
+     (for/list ([row M]) 
+       (match row
+         [`(,(? wildcard?) ,xs ...)
+          `((,@(make-list (length (input-signature c)) '_) ,@xs))]
+         [`((,(== c) ,xs ...) ,ys ...)
+          `((,@xs ,@ys))]
+         [`((,(not (== c)) ,_ ...) ,_ ...)
+          `()]))))
   
-  
-  (test-equal? "identity 2"
-               (run '((data Bool
-                            true
-                            false)
-                      (define identity2
-                        (λ (Bool → Bool)
-                          (a → a)))
-                      (identity2 true)))
-               'true)
-
-  (test-equal? "maybe"
-               (run '((data Bool
-                            true
-                            false)
-                      (data Maybe-Bool
-                            Nothing
-                            (just Bool))
-                      (define identity
-                        (λ (Bool → Bool)
-                          (true → true)
-                          (false → false)))
-                      (just (identity true))))
-               '(just true))
-
-  (test-equal? "and"
-               (run '((data Bool
-                            true
-                            false)
-                      (data Maybe-Bool
-                            Nothing
-                            (just Bool))
-                      (define and
-                        (λ (Bool Bool → Bool)
-                          (true true → true)
-                          (false true → false)
-                          (true false → false)
-                          (false false → false)))
-                      (just (and true false))))
-               '(just false))
-
-  (test-equal? "const-left"
-               (run '((data Bool
-                            true
-                            false)
-                      (data Maybe-Bool
-                            Nothing
-                            (just Bool))
-                      (data List
-                            null
-                            (cons Bool List))
-                      (define right-proj
-                        (λ (Bool Bool → Bool)
-                          (a true → true)
-                          (a b → (cons b a))))
-                      (right-proj true false)))
-               '(cons false true))
+  (match M
+    [`() #true]
+    [`(() ..1) #false]
+    [(app transpose `(,first-col ,_ ...))
+     (match typevec
+       [`(,type ,tail-types ...)
+        (if (complete? type (signature-in first-col))
+            (for/or ([c (all-constructors type)])
+              (NE* types `(,@(input-signature c) ,@tail-types)
+                   (S c M)))
+            (NE* types tail-types
+                 (D M)))])]))
 
 
-  #;(test-equal? "haskdefs"
-                 (rewrite-haskdefs '((and :: Bool Bool → Bool)
-                                     (and a true = true)
-                                     (and a b = (cons b a))
-                                     (id :: Bool → Bool)
-                                     (id a = a)
-                                     true))
-                 '((define and
-                     (λ (Bool Bool → Bool)
-                       (a true → true)
-                       (a b → (cons b a))))
-                   (define id
-                     (λ (Bool → Bool)
-                       (a → a)))
-                   true))
-
-  (define haskell-style-test
-    '((data Bool
-            true
-            false)
-  
-      (data ListBool
-            null
-            (cons Bool List))
-  
-      (and :: Bool Bool → Bool)
-      (and true true = true)
-      (and a b = false)
-
-      (or :: Bool Bool → Bool)
-      (or true a = true)
-      (or a true = true)
-      (or a b = false)
-  
-      (and (or true false)
-           (or false false))))
-  
-  #;(check-equal? (rewrite-haskdefs haskell-style-test)
-                  '((data Bool
-                          true
-                          false)
-                    (data ListBool
-                          null
-                          (cons Bool List))
-                    (define and
-                      (λ (Bool Bool → Bool)
-                        (true true → true)
-                        (a b → false)))
-                    (define or
-                      (λ (Bool Bool → Bool)
-                        (true a → true)
-                        (a true → true)
-                        (a b → false)))
-                    (and (or true false) (or false false))))
-
-  #;(check-equal? (run haskell-style-test)
-                  'false)
-
-  #;(test-exn "non-exhaustive"
-              (regexp (regexp-quote
-                       "error: not exhaustive:  (Bool Bool) ((true a) (a true))"))
-              (thunk (run '((data Bool
-                                  true
-                                  false)
-  
-                            (data ListBool
-                                  null
-                                  (cons Bool List))
-  
-                            (and :: Bool Bool → Bool)
-                            (and true true = true)
-                            (and a b = false)
-
-                            (or :: Bool Bool → Bool)
-                            (or true a = true)
-                            (or a true = true)
-  
-                            (and (or true false)
-                                 (or false false))))))
-
-
-  )

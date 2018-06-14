@@ -59,16 +59,19 @@ Proceed recursively, considering a single column at a time. Call the first colum
 **Case 1:** The signature is complete. In this case, we can consider each constructor independently. That is, we can separate our matrix into submatrices for every constructor in our signature. If **any** of these is non-exhaustive, then the original matrix is non-exhaustive. Note that since every entry in the first column of these submatrices will be the same constructor, we can just drop those constructors and instead append their arguments as new columns. This probably sounds confusing; see the examples below, in particular the *pair* example. Note that while, for each submatrix, we're dropping the rows whose first entries are headed by other constructors, we do need to be careful with how we handle rows headed by wildcards. This doesn't occur in our example, so you should work out a similar case yourself whose first column does have both a complete signature and a wildcard.
 
 **CASE1(M, void), a 1-by-0 match matrix:**
+
 | (empty row) |
 |:-----------:|
 | (empty row) |
 
 **CASE1(M, box), a 1-by-1 match matrix:**
+
 |  Any |
 |:----:|
 | _    |
 
 **CASE1(M, pair), a 2 by 2 match matrix:**
+
 | Any  | Any  |
 |:-----|-----:|
 | _    | void |
@@ -81,6 +84,7 @@ The box case is clearly exhaustive. The void case looks a bit weird, but logical
 Note that CASE1(M, pair) above is such a matrix, since the signature of its first column is {void}. So we discard the non-wildcard rows and the first column to form:
 
 **CASE2(CASE1(M,cons)), a 1-by-1 matrix:**
+
 | Any |
 |----|
 | void |

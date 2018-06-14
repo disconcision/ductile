@@ -17,12 +17,13 @@ So let's consider non-exhaustiveness as a predicate taking a single input; an *m
 ```
   
 **An example 4-by-1 match matrix, M:**
+
 | Any |
 |:-------------:|
 | (pair _ true) |
 | (pair true _) |
 | (box _)       |
-| void         |
+| void          |
 
 *Note that we're appending an additional header row to represent the type of that column, and that _ represents a wildcard pattern variable. Is this matrix exhaustive?*
 

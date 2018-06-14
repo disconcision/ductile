@@ -17,7 +17,7 @@ with only a single n-ary constructor is essentially a struct.
 |#
 
 #; (grammar:
-    (TERMINALS (type-id ; these all form seperate namespaces
+    (TERMINALS (type-id ; these all form separate namespaces
                 cons-id
                 id))
     (prog ((data type-id
@@ -31,7 +31,7 @@ with only a single n-ary constructor is essentially a struct.
            cons-id
            (cons-id expr ...)
            (id expr ...)))
-    (lambda ((λ type
+    (lambda ((λ (type-id ... → type-id)
                (pattern → expr)
                ...)))
     (expr-or-lambda (expr

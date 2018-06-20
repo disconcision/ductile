@@ -24,26 +24,24 @@ it would not be if typechecking was actually implemented.
                 cons-id ; though this is not enforced
                 id))
     (prog ((data type-id
-                 constructor-dec
+                 (OR cons-id
+                     (cons-id type-id ..1))
                  ..1)
-           ..1
-           (define id expr-or-lambda)
+           ..1 ; otherwise, no valid expr
+           (define id (OR expr
+                          function))
            ...
            expr))
-    (expr (id
-           cons-id
-           (cons-id expr ...1)
-           (id expr ...)))
-    (lambda ((λ (type-id ... → type-id)
-               (pattern → expr)
-               ...)))
-    (expr-or-lambda (expr
-                     lambda))
-    (pattern (cons-id
-              (cons-id pattern ...)
-              id))
-    (constructor-dec (cons-id
-                      (cons-id type-id ...))))
+    (expr (OR id
+              cons-id
+              (cons-id expr ...1)
+              (id expr ...)))
+    (function ((λ (type-id ..1 → type-id)
+                 (pattern → expr)
+                 ...))) ; if λ is empty, it's not exhaustive
+    (pattern (OR (cons-id
+                  (cons-id pattern ..1)
+                  id))))
 
 #|
 
@@ -160,8 +158,6 @@ This could be added as a seperate layer
 
 
 (define (NE* types typevec M)
-
-  #;#;#;#;(println "M") (println types)(println typevec) (println M)
 
   (define wildcard?
     (conjoin symbol?

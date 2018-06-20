@@ -14,22 +14,25 @@ declared with its data form. A data form with
 only nullary constructors is essentially an enum, and one
 with only a single n-ary constructor is essentially a struct.
 
+note that this language is only technically turing-complete;
+it would not be if typechecking was actually implemented.
+
 |#
 
-#; (grammar:
+#; (grammar
     (TERMINALS (type-id ; these all form separate namespaces
-                cons-id
+                cons-id ; though this is not enforced
                 id))
     (prog ((data type-id
                  constructor-dec
-                 ...)
-           ...
+                 ..1)
+           ..1
            (define id expr-or-lambda)
            ...
            expr))
     (expr (id
            cons-id
-           (cons-id expr ...)
+           (cons-id expr ...1)
            (id expr ...)))
     (lambda ((λ (type-id ... → type-id)
                (pattern → expr)
@@ -68,7 +71,7 @@ This could be added as a seperate layer
    from the data forms |#
 (define (collate-data stx types)
   (match stx
-    [`(data ,type ,cs ...)
+    [`(data ,type ,cs ..1)
      (for/fold ([env types])
                ([c cs])
        (match c
@@ -113,11 +116,14 @@ This could be added as a seperate layer
    used in this implementation, but actually using pattern
    matching doesn't really let you gloss over any of the logic.|#
 (define (pattern-match types c-env arg pat)
-  (cond [(and ((constructor-id? types) pat)
+  (define literal?
+    (constructor-id? types))
+  (define identifier?
+    (conjoin symbol? (compose not literal?)))
+  (cond [(and (literal? pat)
               (equal? arg pat))
          c-env]
-        [(and (not ((constructor-id? types) pat))
-              (symbol? pat))
+        [(identifier? pat)
          (hash-set c-env pat arg)]
         [(list? pat)
          (for/fold ([env c-env])
@@ -155,7 +161,9 @@ This could be added as a seperate layer
 
 (define (NE* types typevec M)
 
-  (define (wildcard? stx)
+  #;#;#;#;(println "M") (println types)(println typevec) (println M)
+
+  (define wildcard?
     (conjoin symbol?
              (disjoin (curry equal? '_)
                       (negate (constructor-id? types)))))
@@ -198,10 +206,10 @@ This could be added as a seperate layer
      append
      (for/list ([row M]) 
        (match row
-         [`(,(? wildcard?) ,xs ...)
-          `((,@(make-list (length (input-signature c)) '_) ,@xs))]
          [`((,(== c) ,xs ...) ,ys ...)
           `((,@xs ,@ys))]
+         [`(,(? wildcard?) ,xs ...)
+          `((,@(make-list (length (input-signature c)) '_) ,@xs))]
          [`((,(not (== c)) ,_ ...) ,_ ...)
           `()]))))
   

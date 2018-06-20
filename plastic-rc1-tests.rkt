@@ -540,6 +540,31 @@
                       (maybe-first (cons true (cons false null)))))
                "non-exhaustive")
 
+  (test-equal? "Maybe-List-Nat : complex test"
+               (run '((data Nat zero (S Nat))
+                      (data List-Nat
+                            null
+                            (cons Nat List-Nat))
+                      (data Maybe-List-Nat
+                            nothing
+                            (just List-Nat))
+                      (define a-list
+                        (cons zero (cons (S zero) (cons (S (S zero)) null))))
+                      (define maybe-first
+                        (λ (List-Nat → Maybe-List-Nat)
+                          (null → nothing)
+                          ((cons a b) → b)))
+                      (define maybe-rest
+                        (λ (List-Nat → Maybe-List-Nat)
+                          (null → nothing)
+                          ((cons a b) → b)))
+                      (define f
+                        (λ (List → Maybe-List-Nat)
+                          ((cons zero b) → (maybe-rest b))
+                          ((cons (S a) b) → (maybe-first b))
+                          (a → nothing)))
+                      (maybe-rest a-list)))
+               '(cons (S zero) (cons (S (S zero)) null)))
   
 
   )

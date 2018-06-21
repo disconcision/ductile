@@ -134,10 +134,17 @@ This could be added as a seperate layer
 
 
 (define (static-check types stx)
+  (define (wrap-nullary-constructors types)
+    (match-lambda
+      [(? list? stx) (map (wrap-nullary-constructors types) stx)]
+      [(? (constructor-id? types) c)
+       #:when (= 2 (length (hash-ref types c)))
+       `(,c)]
+      [stx stx]))
   (match stx
     [`(λ (,typevec ... → ,_)
         (,ts ... → ,_) ...)
-     (if ((compose (curry NE* types typevec)
+     (if ((compose (curry non-exhaustive? types typevec)
                    (wrap-nullary-constructors types))
           ts)
          (error "non-exhaustive")
@@ -146,18 +153,9 @@ This could be added as a seperate layer
     [_ stx]))
 
 
-(define transpose (curry apply map list))
+(define (non-exhaustive? types typevec M)
 
-(define (wrap-nullary-constructors types)
-  (match-lambda
-    [(? list? stx) (map (wrap-nullary-constructors types) stx)]
-    [(? (constructor-id? types) c)
-     #:when (= 2 (length (hash-ref types c)))
-     `(,c)]
-    [stx stx]))
-
-
-(define (NE* types typevec M)
+  (define transpose (curry apply map list))
 
   (define wildcard?
     (conjoin symbol?
@@ -187,7 +185,7 @@ This could be added as a seperate layer
          (set-add old-set constructor)]
         [_ old-set])))
   
-  (define (D M)
+  (define (reduce-matrix M)
     (apply
      append 
      (for/list ([row M])
@@ -197,7 +195,7 @@ This could be added as a seperate layer
          [`(,(? wildcard?) ,xs ...)
           `(,xs)]))))
   
-  (define (S c M)
+  (define (specialize-matrix c M)
     (apply
      append
      (for/list ([row M]) 
@@ -217,9 +215,9 @@ This could be added as a seperate layer
        [`(,type ,tail-types ...)
         (if (complete? type (signature-in first-col))
             (for/or ([c (all-constructors type)])
-              (NE* types `(,@(input-signature c) ,@tail-types)
-                   (S c M)))
-            (NE* types tail-types
-                 (D M)))])]))
+              (non-exhaustive? types `(,@(input-signature c) ,@tail-types)
+                   (specialize-matrix c M)))
+            (non-exhaustive? types tail-types
+                 (reduce-matrix M)))])]))
 
 

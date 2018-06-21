@@ -11,19 +11,21 @@ So let's consider non-exhaustiveness as a predicate taking a single input; an *m
 *Note: For the examples below, consider the following type declaration:*
 ```racket
 (data Any
-      void
+      true
+      false
       (box Any)
       (pair Any Any))
 ```
   
-**An example 4-by-1 match matrix, M:**
+**An example 5-by-1 match matrix, M:**
 
 | Any |
 |:-------------:|
 | (pair _ true) |
 | (pair true _) |
 | (box _)       |
-| void          |
+| true          |
+| false         |
 
 *Note that we're appending an additional header row to represent the type of that column, and that _ represents a wildcard pattern variable. Is this matrix exhaustive?*
 
@@ -54,11 +56,11 @@ So let's consider non-exhaustiveness as a predicate taking a single input; an *m
  ## Sketch of an Algorithm
 
 
-Proceed recursively, considering a single column at a time. Call the first column of the matrix C, and define the *signature* of C to be the set of all constructors which are the head of a pattern in C. We say this signature is *complete* if it consists of every constructor (of the relevant type).  In our **example M above**, this set is {*void*, *box*, *pair*}, which is the complete signature for type *Any*.
+Proceed recursively, considering a single column at a time. Call the first column of the matrix C, and define the *signature* of C to be the set of all constructors which are the head of a pattern in C. We say this signature is *complete* if it consists of every constructor (of the relevant type).  In our **example M above**, this set is {*true*, *false*, *box*, *pair*}, which is the complete signature for type *Any*.
 
 **Case 1:** The signature is complete. In this case, we can consider each constructor independently. That is, we can separate our matrix into submatrices for every constructor in our signature. If **any** of these is non-exhaustive, then the original matrix is non-exhaustive. Note that since every entry in the first column of these submatrices will be the same constructor, we can just drop those constructors and instead append their arguments as new columns. This probably sounds confusing; see the examples below, in particular the *pair* example. Note that while, for each submatrix, we're dropping the rows whose first entries are headed by other constructors, we do need to be careful with how we handle rows headed by wildcards. This doesn't occur in our example, so you should work out a similar case yourself whose first column does have both a complete signature and a wildcard.
 
-**CASE1(M, void), a 1-by-0 match matrix:**
+**CASE1(M, true) == CASE1(M, false), 1-by-0 match matrices:**
 
 | (empty row) |
 |:-----------:|
@@ -74,19 +76,19 @@ Proceed recursively, considering a single column at a time. Call the first colum
 
 | Any  | Any  |
 |:-----|-----:|
-| _    | void |
-| void | _    |
+| _    | true |
+| true | _    |
 
-The box case is clearly exhaustive. The void case looks a bit weird, but logically we know it's fine, suggesting that we might consider a matrix consisting of an empty row to be exhaustive. On the other hand, the pair case seems more suspect, so let's continue. 
+The box case is clearly exhaustive. The true/false cases looks a bit weird, but semantically we know these should be fine, suggesting we might consider a matrix consisting of an empty row to be exhaustive. On the other hand, the pair case seems more suspect, so let's continue. 
 
 **Case 2**: The signature is not complete. If this is the case, clearly we'll have to rely on wildcards. If there are none in the column, then we're stuck, and the match matrix is non-exhaustive. If there are wildcards, then we can always ensure a match for this variable, so we can discard the first column and proceed to consider the rest. BUT this means that we've committed to this wildcard, and so before proceeding we should discard all rows which *don't* begin with a wildcard.
 
-Note that CASE1(M, pair) above is such a matrix, since the signature of its first column is {void}. So we discard the non-wildcard rows and the first column to form:
+Note that CASE1(M, pair) above is such a matrix, since the signature of its first column is just {true}. So we discard the non-wildcard rows and the first column to form:
 
 **CASE2(CASE1(M,cons)), a 1-by-1 matrix:**
 
-| Any |
-|----|
-| void |
+| Any  |
+|------|
+| true |
 
 This matrix is clearly non-exhaustive, so by the rules for Case 1, the original matrix M is non-exhaustive. In the interests of homogeneity, note that this is again a case-2 matrix. Discarding all non-wildcard rows yields the empty matrix, suggesting that we treat the empty matrix (as distinct from a matrix with an empty row, as above) as non-exhaustive.
